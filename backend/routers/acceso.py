@@ -15,7 +15,19 @@ from backend.schemas.acceso import CheckResult
 router = APIRouter(prefix="/acceso", tags=["Acceso"])
 
 
-async def _log(db: AsyncSession, cliente_id, resultado: str, motivo: str | None) -> None:
+async def _log(db: AsyncSession, cliente_id, resultado: str, motivo: str | None, today: date | None = None) -> None:
+    if resultado == "denegado" and today is not None:
+        existing = await db.execute(
+            select(Acceso)
+            .where(
+                Acceso.cliente_id == cliente_id,
+                func.date(Acceso.fecha_hora) == today,
+                Acceso.resultado == "denegado",
+            )
+            .limit(1)
+        )
+        if existing.scalar_one_or_none() is not None:
+            return
     db.add(Acceso(cliente_id=cliente_id, resultado=resultado, motivo=motivo))
     await db.commit()
 
@@ -39,12 +51,12 @@ async def check_acceso(
         if (now - last_dt).days >= 90:
             cliente.habilitado = False
             await db.commit()
-            await _log(db, cliente.id, "denegado", "cuenta_deshabilitada")
+            await _log(db, cliente.id, "denegado", "cuenta_deshabilitada", today)
             return CheckResult(ok=False, message="Tu cuenta fue deshabilitada por inactividad.", motivo="cuenta_deshabilitada")
 
     # b) Account enabled
     if not cliente.habilitado:
-        await _log(db, cliente.id, "denegado", "cuenta_deshabilitada")
+        await _log(db, cliente.id, "denegado", "cuenta_deshabilitada", today)
         return CheckResult(ok=False, message="Tu cuenta está deshabilitada. Contactá al administrador.", motivo="cuenta_deshabilitada")
 
     # c) Has any membership
@@ -61,7 +73,7 @@ async def check_acceso(
 
     # d) Active membership
     if membresia.fecha_vencimiento < today:
-        await _log(db, cliente.id, "denegado", "cuota_vencida")
+        await _log(db, cliente.id, "denegado", "cuota_vencida", today)
         return CheckResult(ok=False, message="Tu cuota está vencida. Renová tu membresía.", motivo="cuota_vencida")
 
     # e) Already checked in today
@@ -74,7 +86,7 @@ async def check_acceso(
         )
     )
     if already.scalar_one_or_none():
-        await _log(db, cliente.id, "denegado", "ya_ingreso_hoy")
+        await _log(db, cliente.id, "denegado", "ya_ingreso_hoy", today)
         return CheckResult(ok=False, message="Ya ingresaste hoy.", motivo="ya_ingreso_hoy")
 
     # f) Weekly plan limit
@@ -95,7 +107,7 @@ async def check_acceso(
             )
         )
         if week_count.scalar_one() >= plan.dias_por_semana:
-            await _log(db, cliente.id, "denegado", "plan_agotado")
+            await _log(db, cliente.id, "denegado", "plan_agotado", today)
             return CheckResult(
                 ok=False,
                 message=f"Ya usaste los {plan.dias_por_semana} días de tu plan esta semana.",

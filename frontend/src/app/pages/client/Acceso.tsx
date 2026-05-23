@@ -55,6 +55,7 @@ export default function Acceso() {
     if (autoFire) return
 
     let scanner: Html5Qrcode | null = null
+    let started = false
     let stopped = false
 
     clearDiv('qr-reader')
@@ -76,16 +77,25 @@ export default function Acceso() {
         fireCheckin()
       },
       undefined
-    ).catch(() => {
+    ).then(() => {
+      started = true
+      // if cleanup already ran before start() resolved, stop now
+      if (stopped) scanner?.stop().catch(() => {})
+    }).catch(() => {
       setState('denied')
       setMessage('No se pudo acceder a la cámara')
     })
 
     return () => {
+      const alreadyStopped = stopped
       stopped = true
-      scanner?.stop().catch(() => {}).finally(() => {
+      if (started && !alreadyStopped) {
+        scanner?.stop().catch(() => {}).finally(() => {
+          try { scanner?.clear() } catch {}
+        })
+      } else {
         try { scanner?.clear() } catch {}
-      })
+      }
     }
   }, [autoFire])
 

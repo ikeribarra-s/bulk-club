@@ -36,7 +36,12 @@ Frontend route guards (`requireClient` / `requireAdmin` in `routes.tsx`) read `l
 5. Already checked in today?
 6. Weekly day count >= `plan.dias_por_semana`? (NULL = unlimited)
 
-Writes a row to `accesos` for every permitted entry. **Does not log denied entries when the client has no membership** (no membership = not a real member yet).
+**Log rules** (enforced inside `_log()`):
+- `permitido` → always logged
+- `denegado` → logged only if no other `denegado` entry exists for that client today (first denial per day only)
+- `sin_membresia` denial → never logged (not a real member yet)
+
+This prevents DB spam from repeated scan attempts.
 
 ### Membership status
 There is no stored `activa` column on `membresias`. Active = `fecha_vencimiento >= today`, computed at query time everywhere. The `activa` field in API responses is always derived.
@@ -54,16 +59,20 @@ Filter where `row_num == 1`. Avoids N+1 queries.
 ### Manual client creation
 `google_id` and `email` are nullable on `clientes` to support admin-created accounts. Password defaults to the client's DNI. `habilitado` is set to `True` immediately when admin creates the account (unlike Google OAuth flow where it starts `False` and requires admin activation).
 
-### React StrictMode double-invocation
-The `/acceso` check-in page uses a `useRef(false)` guard to prevent StrictMode from firing the check-in API call twice in development:
-```tsx
-const called = useRef(false)
-useEffect(() => {
-  if (called.current) return
-  called.current = true
-  accesoApi.check().then(...)
-}, [])
-```
+### QR check-in — two flows
+The `/acceso` page supports two entry paths:
+- `?qr=1` param in URL → auto-fires check-in on load (native camera scan flow)
+- No param → renders `html5-qrcode` live scanner; fires check-in when it reads a URL whose pathname includes `/acceso`
+
+The admin `/admin/qr` page generates the QR. URL is configurable and saved to `localStorage` under `checkin_qr_url`. Default: `{origin}/acceso?qr=1`.
+
+### React StrictMode + html5-qrcode
+StrictMode runs effects twice. The scanner lifecycle tracks three flags:
+- `started` — set in `.then()` after `scanner.start()` resolves
+- `stopped` — set when scan succeeds or component unmounts
+- Cleanup only calls `scanner.stop()` if `started && !stopped` to avoid the "scanner is not running" error
+
+The `firedRef` prevents double-firing the check-in API call if StrictMode remounts.
 
 ## Database
 
@@ -105,6 +114,19 @@ Admin password reset is done manually in the DB. Client password can be reset to
 python seed_fake_data.py           # insert fake plans, clients, accesos, ventas
 python seed_fake_data.py --clear   # drop everything and re-seed
 ```
+
+## Phone / ngrok testing
+
+Camera access requires HTTPS. Use ngrok to tunnel the Vite dev server:
+```bash
+ngrok http 5173
+```
+Add the resulting `https://xxx.ngrok-free.app` to:
+1. Google Cloud Console → Authorized JavaScript origins
+2. `.env` `ALLOWED_ORIGINS`
+3. `vite.config.ts` already has `allowedHosts: true` so no Vite changes needed
+
+The uvicorn command is always `uvicorn backend.main:app --reload` from the repo root. If you see old TechSur routes (`/productos/`, `/permutas/`) in the OpenAPI docs, you're running the wrong app — check the working directory.
 
 ## What's not implemented yet
 

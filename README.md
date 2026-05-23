@@ -88,6 +88,29 @@ python seed_fake_data.py --clear  # wipes and re-seeds
 
 ---
 
+## Testing on a Phone
+
+The QR scanner requires camera access, which only works on HTTPS (except `localhost`). Use [ngrok](https://ngrok.com) to get a public HTTPS URL that points to your local Vite dev server.
+
+```powershell
+# Install
+winget install ngrok.ngrok
+ngrok config add-authtoken YOUR_TOKEN
+
+# With both uvicorn and pnpm dev already running:
+ngrok http 5173
+# → gives you https://abc123.ngrok-free.app
+```
+
+Then:
+1. Add `https://abc123.ngrok-free.app` to **Authorized JavaScript origins** in [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials.
+2. Add it to `.env`: `ALLOWED_ORIGINS=["http://localhost:5173","https://abc123.ngrok-free.app"]` and restart uvicorn.
+3. Open the ngrok URL on your phone.
+
+> The ngrok URL changes every time you restart ngrok (free plan). Update Google Cloud Console and `.env` if that happens.
+
+---
+
 ## Running in Production
 
 - Set `COOKIE_SECURE=true` and serve over HTTPS
@@ -106,17 +129,23 @@ Client portal (mobile-first)      Admin portal (desktop)
 /login                             /admin/login
 /onboarding                        /admin/dashboard
 /                  (dashboard)     /admin/clientes
-/acceso            (QR check-in)   /admin/membresias
+/acceso            (QR scanner)    /admin/membresias
                                    /admin/pagos
                                    /admin/planes
                                    /admin/stock
                                    /admin/ventas
                                    /admin/accesos
+                                   /admin/qr
 ```
 
 ### Client Check-In Flow
 
-The QR code at the gym entrance points to `https://your-domain.com/acceso`. The client has the web app open on their phone, already logged in. Scanning the QR navigates to `/acceso`, which fires `POST /api/acceso/check`. The backend runs these checks in order:
+The QR code at the gym entrance is generated at `/admin/qr` and encodes `https://your-domain.com/acceso?qr=1`. Two scan flows are supported:
+
+- **In-app scanner** (recommended): client taps the "Ingresar" tab → live camera opens → scans the QR → check-in fires in-app.
+- **Native camera**: phone camera scans the QR → browser opens the URL → `?qr=1` param triggers auto-fire on load.
+
+Both flows call `POST /api/acceso/check`. The backend runs these checks in order:
 
 1. 90-day inactivity → auto-disable account
 2. Account enabled?
@@ -125,7 +154,7 @@ The QR code at the gym entrance points to `https://your-domain.com/acceso`. The 
 5. Already checked in today?
 6. Hit the weekly day limit for their plan?
 
-A row is written to `accesos` for every permitted entry (denied entries without a membership are not logged). The page shows a full-screen green or red result.
+Log rules: permitted entries always logged. First denial of the day logged. Subsequent denials on the same day silently ignored (prevents DB abuse from repeated scans). No-membership denials never logged. The page shows a full-screen green or red result.
 
 ### Auth
 
