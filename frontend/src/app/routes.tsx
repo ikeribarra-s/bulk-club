@@ -14,6 +14,7 @@ import AdminStock from './pages/admin/Stock'
 import AdminVentas from './pages/admin/Ventas'
 import AdminAccesos from './pages/admin/Accesos'
 import AdminPlanes from './pages/admin/Planes'
+import AdminQR from './pages/admin/QR'
 
 function requireClient() {
   if (localStorage.getItem('role') !== 'client') return redirect('/login')
@@ -52,6 +53,7 @@ export const router = createBrowserRouter([
       { path: 'ventas', Component: AdminVentas },
       { path: 'planes', Component: AdminPlanes },
       { path: 'accesos', Component: AdminAccesos },
+      { path: 'qr', Component: AdminQR },
     ],
   },
 ])

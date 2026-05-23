@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router'
-import { Dumbbell, Users, CreditCard, DollarSign, Package, ShoppingCart, LogIn, LayoutDashboard, LogOut, ClipboardList } from 'lucide-react'
+import { Dumbbell, Users, CreditCard, DollarSign, Package, ShoppingCart, LogIn, LayoutDashboard, LogOut, ClipboardList, QrCode } from 'lucide-react'
 import { authApi } from '../api'
 
 const links = [
@@ -11,6 +11,7 @@ const links = [
   { to: '/admin/stock', label: 'Stock', icon: Package },
   { to: '/admin/ventas', label: 'Ventas', icon: ShoppingCart },
   { to: '/admin/accesos', label: 'Accesos', icon: LogIn },
+  { to: '/admin/qr', label: 'QR de acceso', icon: QrCode },
 ]
 
 export default function AdminLayout() {
