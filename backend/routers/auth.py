@@ -33,7 +33,7 @@ def _set_token_cookie(response: JSONResponse, token: str) -> None:
 
 
 @router.post("/admin/token")
-@limiter.limit("5/minute")
+@limiter.limit("20/minute")
 async def admin_login(
     request: Request,
     form: OAuth2PasswordRequestForm = Depends(),

@@ -107,8 +107,9 @@ export interface DashboardData {
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, { credentials: 'include', ...options })
   if (res.status === 401) {
+    const role = localStorage.getItem('role')
     localStorage.removeItem('role')
-    window.location.href = res.url.includes('/api/admin') ? '/admin/login' : '/login'
+    window.location.href = role === 'admin' ? '/admin/login' : '/login'
     throw new Error('Sesión expirada')
   }
   if (!res.ok) {
@@ -156,7 +157,13 @@ export const meApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nombre, apellido, dni }),
     }),
-  status: () => apiFetch<{ onboarded: boolean; habilitado: boolean; nombre: string | null; apellido: string | null; membresia: { plan_nombre: string; fecha_vencimiento: string; activa: boolean } | null }>('/api/me/status'),
+  status: () => apiFetch<{ id: string; onboarded: boolean; habilitado: boolean; nombre: string | null; apellido: string | null; foto_url: string | null; bio: string | null; membresia: { plan_nombre: string; fecha_vencimiento: string; activa: boolean } | null }>('/api/me/status'),
+  updateProfile: (body: { bio?: string | null; foto_url?: string | null }) =>
+    apiFetch<{ foto_url: string | null; bio: string | null }>('/api/me/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   accesos: () => apiFetch<Acceso[]>('/api/me/accesos'),
   tab: () => apiFetch<TabBalance>('/api/me/tab'),
 }
@@ -233,4 +240,130 @@ export const adminAccesosApi = {
 
 export const adminDashboardApi = {
   get: () => apiFetch<DashboardData>('/api/admin/dashboard'),
+}
+
+// ─── Admin Me ─────────────────────────────────────────────────────────────────
+
+export interface AdminMe {
+  id: string
+  username: string
+  foto_url: string | null
+}
+
+export const adminMeApi = {
+  get: () => apiFetch<AdminMe>('/api/admin/me'),
+  update: (body: { username?: string | null; foto_url?: string | null }) =>
+    apiFetch<AdminMe>('/api/admin/me', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+}
+
+// ─── Feed ─────────────────────────────────────────────────────────────────────
+
+export interface Ejercicio {
+  nombre: string
+  series: number | null
+  repeticiones: string | null
+  peso_kg: number | null
+  notas: string | null
+  orden: number
+}
+
+export interface Rutina {
+  nombre: string
+  descripcion: string | null
+  ejercicios: Ejercicio[]
+}
+
+export interface FeedPost {
+  id: string
+  author_id: string
+  author_type: 'client' | 'admin'
+  author_name: string
+  author_foto_url: string | null
+  tipo: 'general' | 'rutina'
+  titulo: string | null
+  contenido: string | null
+  imagen_url: string | null
+  rutina: Rutina | null
+  like_count: number
+  comment_count: number
+  liked_by_me: boolean
+  created_at: string
+}
+
+export interface FeedComment {
+  id: string
+  post_id: string
+  author_id: string
+  author_type: 'client' | 'admin'
+  author_name: string
+  contenido: string
+  parent_comment_id: string | null
+  edited_at: string | null
+  created_at: string
+}
+
+export interface PostCreateBody {
+  tipo: 'general' | 'rutina'
+  titulo?: string | null
+  contenido?: string | null
+  imagen_url?: string | null
+  rutina?: {
+    nombre: string
+    descripcion?: string | null
+    ejercicios: Partial<Ejercicio>[]
+  } | null
+}
+
+export const feedApi = {
+  list: (skip = 0, limit = 20) =>
+    apiFetch<FeedPost[]>(`/api/feed?skip=${skip}&limit=${limit}`),
+  listByAuthor: (authorId: string, limit = 50) =>
+    apiFetch<FeedPost[]>(`/api/feed?author_id=${authorId}&limit=${limit}`),
+  create: (body: PostCreateBody) =>
+    apiFetch<FeedPost>('/api/feed/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  delete: (id: string) =>
+    apiFetch<void>(`/api/feed/posts/${id}`, { method: 'DELETE' }),
+  like: (id: string) =>
+    apiFetch<{ liked: boolean; like_count: number }>(`/api/feed/posts/${id}/like`, { method: 'POST' }),
+  getLikes: (id: string) =>
+    apiFetch<{ cliente_id: string; author_name: string }[]>(`/api/feed/posts/${id}/likes`),
+  getComments: (id: string) =>
+    apiFetch<FeedComment[]>(`/api/feed/posts/${id}/comments`),
+  addComment: (id: string, contenido: string, parent_comment_id?: string | null) =>
+    apiFetch<FeedComment>(`/api/feed/posts/${id}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contenido, parent_comment_id: parent_comment_id ?? null }),
+    }),
+  editComment: (id: string, contenido: string) =>
+    apiFetch<FeedComment>(`/api/feed/comments/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contenido }),
+    }),
+  deleteComment: (id: string) =>
+    apiFetch<void>(`/api/feed/comments/${id}`, { method: 'DELETE' }),
+  uploadImage: async (file: File): Promise<string> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch('/api/feed/upload', { method: 'POST', credentials: 'include', body: form })
+    if (res.status === 401) {
+      localStorage.removeItem('role')
+      window.location.href = '/login'
+      throw new Error('Sesión expirada')
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: 'Error al subir imagen' }))
+      throw new Error(err.detail ?? 'Error al subir imagen')
+    }
+    return (await res.json()).url
+  },
 }

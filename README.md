@@ -1,6 +1,24 @@
 # Bulk Club — Gym Management System
 
-Web app for managing a gym: member check-ins, memberships, payments, and product sales. Two portals — a mobile-first client portal and a desktop admin panel — served from a single React app.
+Web app for managing a gym: member check-ins, memberships, payments, product sales, and a social feed. Two portals — a mobile-first client portal and a desktop admin panel — served from a single React app.
+
+## Features
+
+**Client portal (mobile)**
+- Instagram-style profile: photo, bio, post grid, stats
+- Membership status card and tab balance (unpaid product charges)
+- Social feed: post text, images, or structured workout routines; like and comment
+- QR check-in: scan the gym entrance code or show yours to be scanned
+- Recent check-in history
+
+**Admin panel (desktop)**
+- Dashboard: active members, today's check-ins, expiring memberships, low stock
+- Client management — create, enable/disable, assign/renew memberships, reset passwords
+- Plans, memberships, payments, stock, product sales
+- Check-in log with filtering
+- QR code generator for the gym entrance
+- Social feed — post news, workout routines, and updates
+- Admin profile — change username and photo from the sidebar
 
 ## Tech Stack
 
@@ -9,7 +27,7 @@ Web app for managing a gym: member check-ins, memberships, payments, and product
 | Backend | FastAPI (Python), async SQLAlchemy 2.x, asyncpg |
 | Database | PostgreSQL via Supabase |
 | Auth | JWT in httpOnly cookies; Google OAuth for clients, username/password for admins |
-| Frontend | React 18, React Router v7, Tailwind CSS v4, Vite |
+| Frontend | React 19, React Router v7, TypeScript, Tailwind CSS v4, Vite |
 | Rate limiting | slowapi |
 
 ---
@@ -23,7 +41,7 @@ Web app for managing a gym: member check-ins, memberships, payments, and product
 
 ### 1. Database
 
-Run `supabase_schema.sql` in the Supabase SQL editor to create all tables.
+Run `supabase_schema.sql` in the Supabase SQL editor to create all tables and apply migrations.
 
 ### 2. Backend
 
@@ -38,7 +56,7 @@ cp .env.example .env
 # Fill in .env (see below)
 
 uvicorn backend.main:app --reload
-# API runs at http://localhost:8000
+# API at http://localhost:8000
 ```
 
 **.env values:**
@@ -51,7 +69,7 @@ ALLOWED_ORIGINS=["http://localhost:5173"]
 COOKIE_SECURE=false
 ```
 
-> Note: the `DATABASE_URL` must use the `postgresql+asyncpg://` scheme for the async driver.
+> `DATABASE_URL` must use `postgresql+asyncpg://` — not `postgresql://`.
 
 ### 3. Frontend
 
@@ -59,24 +77,23 @@ COOKIE_SECURE=false
 cd frontend
 pnpm install
 pnpm dev
-# App runs at http://localhost:5173
+# App at http://localhost:5173
 ```
 
-The Vite dev server proxies `/api/*` to `http://localhost:8000`.
+Vite proxies `/api/*` to `http://localhost:8000`.
 
 ### 4. Create the first admin
 
-Insert directly in Supabase — there is no admin registration UI by design.
+No registration UI by design. Insert directly in Supabase:
 
 ```python
-# Generate the password hash locally:
+# Generate a password hash:
 import bcrypt
 print(bcrypt.hashpw(b"your-password", bcrypt.gensalt()).decode())
 ```
 
 ```sql
-INSERT INTO usuarios (username, password_hash)
-VALUES ('admin', '$2b$12$...');
+INSERT INTO usuarios (username, password_hash) VALUES ('admin', '$2b$12$...');
 ```
 
 ### 5. Seed fake data (optional)
@@ -90,33 +107,19 @@ python seed_fake_data.py --clear  # wipes and re-seeds
 
 ## Testing on a Phone
 
-The QR scanner requires camera access, which only works on HTTPS (except `localhost`). Use [ngrok](https://ngrok.com) to get a public HTTPS URL that points to your local Vite dev server.
+The QR scanner and camera upload require HTTPS. Use [ngrok](https://ngrok.com):
 
-```powershell
-# Install
-winget install ngrok.ngrok
-ngrok config add-authtoken YOUR_TOKEN
-
-# With both uvicorn and pnpm dev already running:
+```bash
 ngrok http 5173
-# → gives you https://abc123.ngrok-free.app
+# → https://abc123.ngrok-free.app
 ```
 
 Then:
-1. Add `https://abc123.ngrok-free.app` to **Authorized JavaScript origins** in [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials.
+1. Add the URL to **Authorized JavaScript origins** in Google Cloud Console → APIs & Services → Credentials.
 2. Add it to `.env`: `ALLOWED_ORIGINS=["http://localhost:5173","https://abc123.ngrok-free.app"]` and restart uvicorn.
-3. Open the ngrok URL on your phone.
+3. Open the URL on your phone.
 
-> The ngrok URL changes every time you restart ngrok (free plan). Update Google Cloud Console and `.env` if that happens.
-
----
-
-## Running in Production
-
-- Set `COOKIE_SECURE=true` and serve over HTTPS
-- Set `ALLOWED_ORIGINS` to your production domain
-- Build the frontend: `cd frontend && pnpm build` — output goes to `frontend/dist`
-- Serve `frontend/dist` as static files or deploy to any CDN; point the API path to the FastAPI server
+> The ngrok URL changes each restart (free plan). Update Google Cloud Console and `.env` accordingly.
 
 ---
 
@@ -127,45 +130,51 @@ Then:
 ```
 Client portal (mobile-first)      Admin portal (desktop)
 /login                             /admin/login
-/onboarding                        /admin/dashboard
-/                  (dashboard)     /admin/clientes
-/acceso            (QR scanner)    /admin/membresias
-                                   /admin/pagos
+/onboarding                        /admin
+/                   (profile)      /admin/clientes
+/personal           (feed)         /admin/membresias
+/acceso             (QR scanner)   /admin/pagos
                                    /admin/planes
                                    /admin/stock
                                    /admin/ventas
                                    /admin/accesos
                                    /admin/qr
+                                   /admin/personal  (feed)
 ```
 
 ### Client Check-In Flow
 
-The QR code at the gym entrance is generated at `/admin/qr` and encodes `https://your-domain.com/acceso?qr=1`. Two scan flows are supported:
+The QR at the gym encodes `https://your-domain.com/acceso?qr=1`. Two paths:
 
-- **In-app scanner** (recommended): client taps the "Ingresar" tab → live camera opens → scans the QR → check-in fires in-app.
-- **Native camera**: phone camera scans the QR → browser opens the URL → `?qr=1` param triggers auto-fire on load.
+- **In-app scanner**: client taps "Ingresar" → live camera → scans QR → check-in fires.
+- **Native camera**: phone opens the URL → `?qr=1` triggers auto-fire on load.
 
-Both flows call `POST /api/acceso/check`. The backend runs these checks in order:
-
+`POST /api/acceso/check` runs in order:
 1. 90-day inactivity → auto-disable account
 2. Account enabled?
 3. Has a membership?
-4. Membership active (not expired)?
+4. Membership not expired?
 5. Already checked in today?
 6. Hit the weekly day limit for their plan?
 
-Log rules: permitted entries always logged. First denial of the day logged. Subsequent denials on the same day silently ignored (prevents DB abuse from repeated scans). No-membership denials never logged. The page shows a full-screen green or red result.
+Log rules: permitted → always logged. First denial of the day → logged. Repeated denials → silently ignored. No-membership denials → never logged.
+
+### Social Feed
+
+Instagram-style feed shared between clients and admins:
+- Posts can contain text, an image, or a structured workout routine
+- Admins' posts always appear first (`ORDER BY author_type = 'admin' DESC, created_at DESC`)
+- Author name and photo are denormalized at write time (old posts keep the photo from when they were created)
+- Threaded comments (one level), likes (clients only), edit own comments
+- Upload rate-limited per user (10 images/hour); orphan files cleaned up on each upload
 
 ### Auth
 
-- **Clients** log in via Google OAuth (primary) or DNI + password (for manually-created accounts).
-- **Admins** log in via username + password at `/admin/login`.
-- Both issue a JWT stored in an httpOnly cookie. The JWT payload carries `{ sub: user_id, role: "client"|"admin" }`.
-- Route guards in `routes.tsx` read `localStorage.role` (set on login) for fast client-side redirects. The actual security is enforced server-side by `get_current_client` / `get_current_admin` FastAPI dependencies.
-
-### Manual Client Creation
-
-Admins can create client accounts from `/admin/clientes`. The password defaults to the client's DNI. Clients can then log in at `/login` using DNI + password, or link their Google account later.
+- **Clients**: Google OAuth or DNI + password (for admin-created accounts)
+- **Admins**: username + password at `/admin/login`
+- JWT stored in httpOnly cookie, payload: `{ sub: user_id, role: "client"|"admin" }`
+- Route guards in `routes.tsx` read `localStorage.role` for fast redirects; server enforces via `get_current_client` / `get_current_admin` deps
+- On 401, `apiFetch` reads `localStorage.role` to redirect to the correct login page (admin vs client)
 
 ---
 
@@ -174,44 +183,46 @@ Admins can create client accounts from `/admin/clientes`. The password defaults 
 ```
 bulk-club/
 ├── backend/
-│   ├── main.py               # FastAPI app, router registration
-│   ├── config.py             # Settings from .env
-│   ├── auth.py               # JWT creation/validation, FastAPI dependencies
-│   ├── database.py           # Async SQLAlchemy engine + session
-│   ├── limiter.py            # slowapi rate limiter instance
-│   ├── models/               # SQLAlchemy ORM models
-│   │   ├── cliente.py
-│   │   ├── plan.py
-│   │   ├── membresia.py
-│   │   ├── pago.py
-│   │   ├── acceso.py
-│   │   ├── producto.py
-│   │   └── venta_producto.py
-│   ├── schemas/              # Pydantic request/response schemas
-│   └── routers/
-│       ├── auth.py           # Google OAuth + admin/client token endpoints
-│       ├── acceso.py         # POST /acceso/check (check-in logic)
-│       ├── me.py             # Client self-service: status, accesos, tab
-│       ├── admin_clientes.py
-│       ├── admin_membresias.py
-│       ├── admin_pagos.py
-│       ├── admin_planes.py
-│       ├── admin_productos.py
-│       ├── admin_ventas.py
-│       ├── admin_accesos.py
-│       └── admin_dashboard.py
+│   ├── main.py
+│   ├── auth.py               # JWT, get_current_*, AuthorInfo (dual-role)
+│   ├── models/               # SQLAlchemy models
+│   │   ├── usuario.py        # admin accounts (username, password_hash, foto_url)
+│   │   ├── cliente.py        # gym members (foto_url, bio)
+│   │   ├── post.py           # feed posts (author_foto_url denormalized)
+│   │   ├── post_like.py
+│   │   ├── post_comment.py   # parent_comment_id for threading
+│   │   └── ...
+│   ├── routers/
+│   │   ├── feed.py           # feed, upload, likes, comments
+│   │   ├── me.py             # client self-service + profile
+│   │   ├── admin_me.py       # admin profile (username, photo)
+│   │   ├── acceso.py         # check-in logic
+│   │   └── admin_*.py
+│   ├── schemas/
+│   └── utils/uploads.py      # UPLOAD_DIR, delete_upload()
 ├── frontend/
 │   └── src/app/
-│       ├── routes.tsx         # React Router route tree
-│       ├── api.ts             # All API types + fetch wrappers
+│       ├── api.ts            # all API types + fetch wrappers
+│       ├── routes.tsx        # route tree with auth guards
 │       ├── components/
+│       │   ├── Feed.tsx      # full feed UI (posts, comments, likes)
 │       │   ├── AdminLayout.tsx
 │       │   └── ClientLayout.tsx
 │       └── pages/
-│           ├── client/        # Login, Onboarding, Dashboard, Acceso
-│           └── admin/         # One file per admin page
-├── supabase_schema.sql
+│           ├── client/       # Dashboard, Personal (feed), Acceso, Onboarding
+│           └── admin/        # one file per admin page
+├── uploads/                  # local image storage (gitignored)
+├── supabase_schema.sql       # full schema + all ALTER TABLE migrations
 ├── seed_fake_data.py
 ├── requirements.txt
 └── .env.example
 ```
+
+---
+
+## Production
+
+- Set `COOKIE_SECURE=true` and serve over HTTPS
+- Set `ALLOWED_ORIGINS` to your production domain
+- Build frontend: `cd frontend && pnpm build` → output in `frontend/dist`
+- Serve `frontend/dist` as static files; point `/api/*` to the FastAPI server

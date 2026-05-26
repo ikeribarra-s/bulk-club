@@ -33,7 +33,7 @@ class ClienteOut(BaseModel):
     id: uuid.UUID
     nombre: str | None
     apellido: str | None
-    email: str
+    email: str | None
     telefono: str | None
     dni: str | None
     habilitado: bool
@@ -46,9 +46,11 @@ class ClienteMe(BaseModel):
     id: uuid.UUID
     nombre: str | None
     apellido: str | None
-    email: str
+    email: str | None
     dni: str | None
     habilitado: bool
+    foto_url: str | None
+    bio: str | None
 
 
 class ClienteConPlan(ClienteOut):

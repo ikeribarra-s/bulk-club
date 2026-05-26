@@ -15,6 +15,8 @@ import AdminVentas from './pages/admin/Ventas'
 import AdminAccesos from './pages/admin/Accesos'
 import AdminPlanes from './pages/admin/Planes'
 import AdminQR from './pages/admin/QR'
+import Personal from './pages/client/Personal'
+import AdminPersonal from './pages/admin/Personal'
 
 function requireClient() {
   if (localStorage.getItem('role') !== 'client') return redirect('/login')
@@ -36,6 +38,7 @@ export const router = createBrowserRouter([
     children: [
       { index: true, Component: ClientDashboard, loader: requireClient },
       { path: 'acceso', Component: Acceso, loader: requireClient },
+      { path: 'personal', Component: Personal, loader: requireClient },
     ],
   },
   // ─── Admin portal ────────────────────────────────────────────────────────────
@@ -54,6 +57,7 @@ export const router = createBrowserRouter([
       { path: 'planes', Component: AdminPlanes },
       { path: 'accesos', Component: AdminAccesos },
       { path: 'qr', Component: AdminQR },
+      { path: 'personal', Component: AdminPersonal },
     ],
   },
 ])

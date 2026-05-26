@@ -137,3 +137,64 @@ create index if not exists idx_accesos_cliente        on accesos(cliente_id);
 create index if not exists idx_accesos_fecha          on accesos(fecha_hora desc);
 create index if not exists idx_ventas_cliente         on ventas_productos(cliente_id);
 create index if not exists idx_ventas_pagado          on ventas_productos(pagado) where not pagado;
+
+-- ============================================================
+-- POSTS / FEED (gym social feed)
+-- ============================================================
+create table if not exists posts (
+  id          uuid primary key default uuid_generate_v4(),
+  author_id   uuid not null,
+  author_type text not null check (author_type in ('client', 'admin')),
+  author_name text not null,
+  tipo        text not null default 'general' check (tipo in ('general', 'rutina')),
+  titulo      text,
+  contenido   text,
+  imagen_url  text,
+  rutina      jsonb,
+  created_at  timestamptz default now()
+);
+
+create table if not exists post_likes (
+  id         uuid primary key default uuid_generate_v4(),
+  post_id    uuid not null references posts(id) on delete cascade,
+  cliente_id uuid not null references clientes(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique (post_id, cliente_id)
+);
+
+create table if not exists post_comments (
+  id          uuid primary key default uuid_generate_v4(),
+  post_id     uuid not null references posts(id) on delete cascade,
+  author_id   uuid not null,
+  author_type text not null check (author_type in ('client', 'admin')),
+  author_name text not null,
+  contenido   text not null,
+  created_at  timestamptz default now()
+);
+
+create index if not exists idx_posts_created        on posts(created_at desc);
+create index if not exists idx_post_likes_post      on post_likes(post_id);
+create index if not exists idx_post_comments_post   on post_comments(post_id);
+
+-- ============================================================
+-- FEED — add parent_comment_id and edited_at to post_comments
+-- Run these if the table already exists from a previous migration
+-- ============================================================
+alter table post_comments add column if not exists parent_comment_id uuid references post_comments(id) on delete cascade;
+alter table post_comments add column if not exists edited_at timestamptz;
+
+-- ============================================================
+-- CLIENT PROFILE — add foto_url and bio to clientes
+-- ============================================================
+alter table clientes add column if not exists foto_url text;
+alter table clientes add column if not exists bio varchar(300);
+
+-- ============================================================
+-- ADMIN PROFILE — add foto_url to usuarios
+-- ============================================================
+alter table usuarios add column if not exists foto_url text;
+
+-- ============================================================
+-- FEED — add author_foto_url to posts
+-- ============================================================
+alter table posts add column if not exists author_foto_url text;

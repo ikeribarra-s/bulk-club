@@ -25,6 +25,8 @@ JWT payload: `{ sub: user_id, role: "client"|"admin" }`. Stored in httpOnly cook
 
 Frontend route guards (`requireClient` / `requireAdmin` in `routes.tsx`) read `localStorage.role` for fast redirects. Real enforcement is in FastAPI deps `get_current_client` / `get_current_admin` in `backend/auth.py`.
 
+**401 redirect rule**: `apiFetch` reads `localStorage.role` before clearing it to decide whether to send to `/login` or `/admin/login`. Never use the request URL to infer the role — feed/upload endpoints are shared and don't contain `/admin/`.
+
 **Critical React Router v7 gotcha**: `path: '/'` matches ALL URLs as a prefix. Never put a loader on the layout route — put it on each child individually. This was a bug that caused `/admin/login` to trigger the client auth guard.
 
 ### Check-in logic (`backend/routers/acceso.py`)
@@ -74,26 +76,49 @@ StrictMode runs effects twice. The scanner lifecycle tracks three flags:
 
 The `firedRef` prevents double-firing the check-in API call if StrictMode remounts.
 
+### Social feed (`backend/routers/feed.py`)
+Instagram-style gym feed shared between clients and admins. Key decisions:
+
+- **Dual-role auth**: `get_any_user` dep in `backend/auth.py` returns `AuthorInfo` dataclass (`id`, `role`, `display_name`, `foto_url`). Accepts either client or admin JWT.
+- **Author fields are denormalized** at write time (`author_name`, `author_foto_url` stored on the post row). Old posts keep the name/photo from when they were created — accepted tradeoff for query simplicity.
+- **Admin posts shown first**: `list_posts` orders by `CASE WHEN author_type='admin' THEN 0 ELSE 1 END, created_at DESC` using SQLAlchemy `case()`.
+- **Threaded comments**: flat DB storage with `parent_comment_id` (FK → same table, CASCADE). One level only. Client organizes into tree with `useMemo`.
+- **Likes**: `post_likes` has `UniqueConstraint("post_id", "cliente_id")`. Admins cannot like (returns 403). Like count returned on each toggle.
+- **Optimistic UI**: likes toggle immediately in the UI, revert on error.
+- **Rate limits** (all via slowapi): upload 10/hour per user, create post 5/min, like 30/min, comment 20/min, list 60/min.
+- **Upload rate-limit key**: extracted from JWT `sub` in `_upload_key()` to avoid shared-NAT collisions. Falls back to IP.
+- **Orphan cleanup**: before every upload, files not referenced by any `posts.imagen_url` or `clientes.foto_url`, older than 30 min, are deleted.
+- **File deletion**: `delete_upload(url)` in `backend/utils/uploads.py` — safe no-op for external URLs, path-traversal protected. Called on post delete and profile photo replacement.
+
+### Admin profile (`backend/routers/admin_me.py`)
+`GET /api/admin/me` and `PUT /api/admin/me` — change username (uniqueness enforced) and profile photo. Widget lives in the `AdminLayout` sidebar. Uses the same `feedApi.uploadImage` as the client for photo uploads.
+
+### Client profile (`backend/routers/me.py` — `PUT /api/me/profile`)
+Clients can set a bio (300 char max) and profile photo from the Dashboard. Photo uploaded via `feedApi.uploadImage`, saved via `meApi.updateProfile({ foto_url })`. Old photo deleted server-side on replacement.
+
 ## Database
 
 PostgreSQL on Supabase. Async driver: `asyncpg`. SQLAlchemy 2.x with `mapped_column` style.
 
 Schema is in `supabase_schema.sql`. Key tables:
-- `usuarios` — admin accounts (username + password_hash)
-- `clientes` — gym members (google_id nullable, email nullable, password_hash nullable)
-- `planes` — plan types (dias_por_semana NULL = unlimited)
+- `usuarios` — admin accounts (`username`, `password_hash`, `foto_url`)
+- `clientes` — gym members (`google_id` nullable, `email` nullable, `password_hash` nullable, `foto_url`, `bio`)
+- `planes` — plan types (`dias_por_semana` NULL = unlimited)
 - `membresias` — one per client per billing period; no stored status
 - `pagos` — payment records, linked to membresia optionally
-- `accesos` — check-in log (resultado: 'permitido' | 'denegado')
+- `accesos` — check-in log (`resultado`: `'permitido'` | `'denegado'`)
 - `productos` — stock items
-- `ventas_productos` — product sales on client tab (pagado boolean)
+- `ventas_productos` — product sales on client tab (`pagado` boolean)
+- `posts` — feed posts (`author_foto_url` denormalized, `rutina` JSON column)
+- `post_likes` — unique per `(post_id, cliente_id)`
+- `post_comments` — `parent_comment_id` self-FK for one-level threading, `edited_at` nullable
 
 `DATABASE_URL` must use `postgresql+asyncpg://` scheme (not `postgresql://`).
 
 ## Frontend conventions
 
 - All API types and fetch functions are in `frontend/src/app/api.ts`. Add types there, not inline.
-- `apiFetch` handles 401 (clears role, redirects to login), non-OK responses (throws with `detail`), and 204 (returns undefined).
+- `apiFetch` handles 401 (reads `localStorage.role` to pick redirect target, clears role), non-OK responses (throws with `detail`), and 204 (returns undefined).
 - Admin list pages filter with `useMemo` on the client side. Only hit the backend for filters that change the dataset meaningfully (e.g. `pagado` on ventas, `estado` on membresias).
 - Toast notifications via `sonner`. Pattern: `toast.success(...)` on success, `toast.error(e.message)` in catch.
 - Forms use plain controlled state (`useState`), not react-hook-form (that dep is installed but unused).

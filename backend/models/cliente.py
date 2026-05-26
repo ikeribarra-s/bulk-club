@@ -19,4 +19,6 @@ class Cliente(Base):
     dni: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     habilitado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     password_hash: Mapped[str | None] = mapped_column(String, nullable=True)
+    foto_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    bio: Mapped[str | None] = mapped_column(String(300), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

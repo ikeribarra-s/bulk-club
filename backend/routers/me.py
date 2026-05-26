@@ -6,6 +6,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import get_current_client
+from backend.utils.uploads import delete_upload
 from backend.database import get_db
 from backend.models.acceso import Acceso
 from backend.models.cliente import Cliente
@@ -19,6 +20,11 @@ from backend.schemas.cliente import ClienteMe, OnboardingIn
 from backend.schemas.venta_producto import TabBalance, VentaProductoDetalle
 
 router = APIRouter(prefix="/me", tags=["Me"])
+
+
+class ProfileUpdate(BaseModel):
+    bio: str | None = None
+    foto_url: str | None = None
 
 
 @router.post("/onboarding")
@@ -73,10 +79,13 @@ async def get_status(
                 "activa": m.fecha_vencimiento >= date.today(),
             }
     return {
+        "id": str(cliente.id),
         "onboarded": onboarded,
         "habilitado": cliente.habilitado,
         "nombre": cliente.nombre,
         "apellido": cliente.apellido,
+        "foto_url": cliente.foto_url,
+        "bio": cliente.bio,
         "membresia": membresia,
     }
 
@@ -127,3 +136,22 @@ async def get_tab(
             producto_nombre=prod.nombre,
         ))
     return TabBalance(items=items, total=round(total, 2))
+
+
+@router.put("/profile")
+async def update_profile(
+    body: ProfileUpdate,
+    cliente: Cliente = Depends(get_current_client),
+    db: AsyncSession = Depends(get_db),
+):
+    if body.bio is not None:
+        cliente.bio = body.bio.strip()[:300] or None
+    if body.foto_url is not None:
+        old_foto = cliente.foto_url
+        cliente.foto_url = body.foto_url or None
+        await db.commit()
+        if old_foto and old_foto != cliente.foto_url:
+            delete_upload(old_foto)
+    else:
+        await db.commit()
+    return {"foto_url": cliente.foto_url, "bio": cliente.bio}

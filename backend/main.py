@@ -9,6 +9,8 @@ from backend.routers import (
     auth,
     acceso,
     me,
+    feed,
+    admin_me,
     admin_clientes,
     admin_membresias,
     admin_pagos,
@@ -34,6 +36,8 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api")
 app.include_router(acceso.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
+app.include_router(feed.router, prefix="/api")
+app.include_router(admin_me.router, prefix="/api")
 app.include_router(admin_clientes.router, prefix="/api")
 app.include_router(admin_membresias.router, prefix="/api")
 app.include_router(admin_pagos.router, prefix="/api")
