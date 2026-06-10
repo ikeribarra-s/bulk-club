@@ -10,6 +10,9 @@ from backend.routers import (
     acceso,
     me,
     feed,
+    messages,
+    trainer_messages,
+    trainer_me,
     admin_me,
     admin_clientes,
     admin_membresias,
@@ -19,6 +22,7 @@ from backend.routers import (
     admin_ventas,
     admin_accesos,
     admin_dashboard,
+    admin_entrenadores,
 )
 
 app = FastAPI(title="Bulk Club API", version="1.0.0")
@@ -37,6 +41,10 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(acceso.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
 app.include_router(feed.router, prefix="/api")
+app.include_router(messages.router, prefix="/api")
+app.include_router(trainer_messages.router, prefix="/api")
+app.include_router(trainer_me.router, prefix="/api")
+app.include_router(admin_entrenadores.router, prefix="/api")
 app.include_router(admin_me.router, prefix="/api")
 app.include_router(admin_clientes.router, prefix="/api")
 app.include_router(admin_membresias.router, prefix="/api")

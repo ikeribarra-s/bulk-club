@@ -59,3 +59,4 @@ class ClienteConPlan(ClienteOut):
     membresia_id: uuid.UUID | None = None
     fecha_vencimiento: date | None = None
     membresia_activa: bool = False
+    trainer_id: uuid.UUID | None = None

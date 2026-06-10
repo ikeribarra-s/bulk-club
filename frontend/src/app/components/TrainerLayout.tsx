@@ -1,42 +1,26 @@
 import { useState, useEffect, useRef } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router'
-import { Dumbbell, Users, CreditCard, DollarSign, Package, ShoppingCart, LogIn, LayoutDashboard, LogOut, ClipboardList, QrCode, Rss, Camera, X, Pencil, UserCheck } from 'lucide-react'
+import { Dumbbell, MessageCircle, Rss, LogOut, Camera, Pencil, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { authApi, adminMeApi, feedApi, type AdminMe } from '../api'
+import { authApi, trainerMeApi, feedApi, type TrainerMe } from '../api'
 
-const links = [
-  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/admin/clientes', label: 'Clientes', icon: Users },
-  { to: '/admin/planes', label: 'Planes', icon: ClipboardList },
-  { to: '/admin/membresias', label: 'Membresías', icon: CreditCard },
-  { to: '/admin/pagos', label: 'Pagos', icon: DollarSign },
-  { to: '/admin/stock', label: 'Stock', icon: Package },
-  { to: '/admin/ventas', label: 'Ventas', icon: ShoppingCart },
-  { to: '/admin/accesos', label: 'Accesos', icon: LogIn },
-  { to: '/admin/qr', label: 'QR de acceso', icon: QrCode },
-  { to: '/admin/personal', label: 'Feed', icon: Rss },
-  { to: '/admin/entrenadores', label: 'Entrenadores', icon: UserCheck },
-]
-
-// ─── Edit modal ───────────────────────────────────────────────────────────────
-
-function EditAdminProfileModal({
-  admin,
+function EditTrainerModal({
+  trainer,
   onClose,
   onSaved,
 }: {
-  admin: AdminMe
+  trainer: TrainerMe
   onClose: () => void
-  onSaved: (updated: AdminMe) => void
+  onSaved: (t: TrainerMe) => void
 }) {
-  const [username, setUsername] = useState(admin.username)
+  const [username, setUsername] = useState(trainer.username)
   const [saving, setSaving] = useState(false)
 
   async function handleSave() {
     if (!username.trim()) return
     setSaving(true)
     try {
-      const updated = await adminMeApi.update({ username: username.trim() })
+      const updated = await trainerMeApi.update({ username: username.trim() })
       onSaved(updated)
       onClose()
       toast.success('Perfil actualizado')
@@ -48,32 +32,20 @@ function EditAdminProfileModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white w-full max-w-sm rounded-2xl shadow-xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="bg-white w-full max-w-sm rounded-2xl shadow-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-900">Editar perfil admin</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-700">
-            <X size={18} />
-          </button>
+          <h2 className="font-semibold text-gray-900">Editar perfil</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700"><X size={18} /></button>
         </div>
-        <div className="px-5 py-4 space-y-3">
-          <div>
-            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide block mb-1.5">
-              Nombre de usuario
-            </label>
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-black transition-colors"
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSave() }}
-            />
-          </div>
+        <div className="px-5 py-4">
+          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide block mb-1.5">Nombre de usuario</label>
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm outline-none focus:border-black transition-colors"
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSave() }}
+          />
         </div>
         <div className="px-5 pb-5">
           <button
@@ -89,33 +61,31 @@ function EditAdminProfileModal({
   )
 }
 
-// ─── Layout ───────────────────────────────────────────────────────────────────
-
-export default function AdminLayout() {
+export default function TrainerLayout() {
   const navigate = useNavigate()
   const avatarInputRef = useRef<HTMLInputElement>(null)
-  const [admin, setAdmin] = useState<AdminMe | null>(null)
+  const [trainer, setTrainer] = useState<TrainerMe | null>(null)
   const [showEdit, setShowEdit] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
 
   useEffect(() => {
-    adminMeApi.get().then(setAdmin).catch(() => {})
+    trainerMeApi.get().then(setTrainer).catch(() => {})
   }, [])
 
   async function handleLogout() {
     await authApi.logout()
     localStorage.removeItem('role')
-    navigate('/admin/login')
+    navigate('/trainer/login')
   }
 
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file || !admin) return
+    if (!file || !trainer) return
     setUploadingAvatar(true)
     try {
       const url = await feedApi.uploadImage(file)
-      const updated = await adminMeApi.update({ foto_url: url })
-      setAdmin(updated)
+      const updated = await trainerMeApi.update({ foto_url: url })
+      setTrainer(updated)
       toast.success('Foto actualizada')
     } catch (err: any) {
       toast.error(err.message)
@@ -133,8 +103,7 @@ export default function AdminLayout() {
           Bulk Club
         </div>
 
-        {/* Admin profile widget */}
-        {admin && (
+        {trainer && (
           <div className="px-4 py-3 border-b border-white/10 flex items-center gap-3">
             <div className="relative shrink-0">
               <button
@@ -142,11 +111,11 @@ export default function AdminLayout() {
                 disabled={uploadingAvatar}
                 className="w-9 h-9 rounded-full overflow-hidden ring-1 ring-white/20 hover:ring-white/60 transition-all group relative"
               >
-                {admin.foto_url ? (
-                  <img src={admin.foto_url} alt={admin.username} className="w-full h-full object-cover" />
+                {trainer.foto_url ? (
+                  <img src={trainer.foto_url} alt={trainer.username} className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full bg-white/10 flex items-center justify-center text-white text-sm font-bold">
-                    {admin.username[0].toUpperCase()}
+                    {trainer.username[0].toUpperCase()}
                   </div>
                 )}
                 <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -156,30 +125,23 @@ export default function AdminLayout() {
                   }
                 </div>
               </button>
-              <input
-                ref={avatarInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleAvatarChange}
-              />
+              <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-medium text-white truncate">{admin.username}</p>
-              <p className="text-[10px] text-gray-400">Admin</p>
+              <p className="text-xs font-medium text-white truncate">{trainer.username}</p>
+              <p className="text-[10px] text-gray-400">Entrenador</p>
             </div>
-            <button
-              onClick={() => setShowEdit(true)}
-              className="text-gray-400 hover:text-white transition-colors shrink-0"
-              title="Editar perfil"
-            >
+            <button onClick={() => setShowEdit(true)} className="text-gray-400 hover:text-white transition-colors shrink-0" title="Editar perfil">
               <Pencil size={13} />
             </button>
           </div>
         )}
 
         <nav className="flex-1 py-3 space-y-0.5 px-2">
-          {links.map(({ to, label, icon: Icon, end }) => (
+          {[
+            { to: '/trainer', label: 'Mensajes', icon: MessageCircle, end: true },
+            { to: '/trainer/feed', label: 'Feed', icon: Rss, end: false },
+          ].map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
@@ -195,6 +157,7 @@ export default function AdminLayout() {
             </NavLink>
           ))}
         </nav>
+
         <button
           onClick={handleLogout}
           className="flex items-center gap-2 px-5 py-4 text-sm text-gray-400 hover:text-white border-t border-white/10 transition-colors"
@@ -209,11 +172,11 @@ export default function AdminLayout() {
         </div>
       </main>
 
-      {showEdit && admin && (
-        <EditAdminProfileModal
-          admin={admin}
+      {showEdit && trainer && (
+        <EditTrainerModal
+          trainer={trainer}
           onClose={() => setShowEdit(false)}
-          onSaved={(updated) => setAdmin(updated)}
+          onSaved={(updated) => setTrainer(updated)}
         />
       )}
     </div>

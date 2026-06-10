@@ -47,6 +47,18 @@ async def get_current_admin(request: Request, db: AsyncSession = Depends(get_db)
     return usuario
 
 
+async def get_current_trainer(request: Request, db: AsyncSession = Depends(get_db)):
+    from backend.models.usuario import Usuario
+    payload = _decode_token(request)
+    if payload.get("role") != "trainer":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Acceso denegado")
+    result = await db.execute(select(Usuario).where(Usuario.id == uuid.UUID(payload["sub"])))
+    usuario = result.scalar_one_or_none()
+    if not usuario:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Entrenador no encontrado")
+    return usuario
+
+
 async def get_current_client(request: Request, db: AsyncSession = Depends(get_db)):
     """Fetch client from DB — habilitado check is left to each route."""
     from backend.models.cliente import Cliente
@@ -67,7 +79,7 @@ async def get_any_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
     payload = _decode_token(request)
     role = payload.get("role")
     user_id = uuid.UUID(payload["sub"])
-    if role == "admin":
+    if role in ("admin", "trainer"):
         result = await db.execute(select(Usuario).where(Usuario.id == user_id))
         u = result.scalar_one_or_none()
         if not u:

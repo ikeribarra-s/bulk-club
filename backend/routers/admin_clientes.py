@@ -63,6 +63,7 @@ async def _enrich_clientes(db: AsyncSession, clientes: list[Cliente]) -> list[Cl
             membresia_id=m.id if m else None,
             fecha_vencimiento=m.fecha_vencimiento if m else None,
             membresia_activa=bool(m and m.fecha_vencimiento >= today),
+            trainer_id=c.trainer_id,
         ))
     return result
 
@@ -196,6 +197,27 @@ async def deshabilitar(
     if not cliente:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
     cliente.habilitado = False
+    await db.commit()
+    await db.refresh(cliente)
+    return cliente
+
+
+class TrainerBody(BaseModel):
+    trainer_id: uuid.UUID | None
+
+
+@router.put("/{cliente_id}/trainer", response_model=ClienteOut)
+async def set_trainer(
+    cliente_id: uuid.UUID,
+    body: TrainerBody,
+    _=Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(Cliente).where(Cliente.id == cliente_id))
+    cliente = result.scalar_one_or_none()
+    if not cliente:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cliente no encontrado")
+    cliente.trainer_id = body.trainer_id
     await db.commit()
     await db.refresh(cliente)
     return cliente

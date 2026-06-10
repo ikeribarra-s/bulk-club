@@ -11,14 +11,6 @@ export interface Cliente {
   created_at: string
 }
 
-export interface ClienteConPlan extends Cliente {
-  plan_nombre: string | null
-  plan_id: string | null
-  membresia_id: string | null
-  fecha_vencimiento: string | null
-  membresia_activa: boolean
-}
-
 export interface Plan {
   id: string
   nombre: string
@@ -109,7 +101,7 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   if (res.status === 401) {
     const role = localStorage.getItem('role')
     localStorage.removeItem('role')
-    window.location.href = role === 'admin' ? '/admin/login' : '/login'
+    window.location.href = role === 'admin' ? '/admin/login' : role === 'trainer' ? '/trainer/login' : '/login'
     throw new Error('Sesión expirada')
   }
   if (!res.ok) {
@@ -177,6 +169,15 @@ export const accesoApi = {
 
 // ─── Admin ────────────────────────────────────────────────────────────────────
 
+export interface ClienteConPlan extends Cliente {
+  plan_nombre: string | null
+  plan_id: string | null
+  membresia_id: string | null
+  fecha_vencimiento: string | null
+  membresia_activa: boolean
+  trainer_id: string | null
+}
+
 export const adminClientesApi = {
   list: (busqueda?: string) => apiFetch<ClienteConPlan[]>(`/api/admin/clientes${busqueda ? `?busqueda=${encodeURIComponent(busqueda)}` : ''}`),
   get: (id: string) => apiFetch<ClienteConPlan>(`/api/admin/clientes/${id}`),
@@ -187,6 +188,7 @@ export const adminClientesApi = {
   deshabilitar: (id: string) => apiFetch<Cliente>(`/api/admin/clientes/${id}/deshabilitar`, { method: 'POST' }),
   renovar: (id: string, forma_pago: string) => apiFetch<{ message: string; nueva_fecha_vencimiento: string; monto_pagado: number; plan: string }>(`/api/admin/clientes/${id}/renovar`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ forma_pago }) }),
   resetPassword: (id: string) => apiFetch<Cliente>(`/api/admin/clientes/${id}/reset-password`, { method: 'POST' }),
+  setTrainer: (id: string, trainer_id: string | null) => apiFetch<Cliente>(`/api/admin/clientes/${id}/trainer`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trainer_id }) }),
 }
 
 export const adminMembresiasApi = {
@@ -366,4 +368,117 @@ export const feedApi = {
     }
     return (await res.json()).url
   },
+}
+
+// ─── Messages ─────────────────────────────────────────────────────────────────
+
+export interface Message {
+  id: string
+  sender_id: string
+  sender_type: 'client' | 'admin'
+  receiver_id: string
+  receiver_type: 'client' | 'admin'
+  contenido: string
+  rutina: Rutina | null
+  read_at: string | null
+  created_at: string
+}
+
+export interface TrainerInfo {
+  id: string
+  username: string
+  foto_url: string | null
+}
+
+export interface Conversation {
+  client_id: string
+  client_nombre: string | null
+  client_apellido: string | null
+  client_foto_url: string | null
+  last_message: string | null
+  last_message_at: string | null
+  unread_count: number
+}
+
+export const messagesApi = {
+  getConversation: () =>
+    apiFetch<{ trainer: TrainerInfo | null; messages: Message[]; unread_count: number }>('/api/messages'),
+  send: (contenido: string, rutina?: Rutina | null) =>
+    apiFetch<Message>('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contenido, rutina: rutina ?? null }),
+    }),
+  markRead: () => apiFetch<void>('/api/messages/read', { method: 'POST' }),
+}
+
+export const trainerMessagesApi = {
+  listConversations: () => apiFetch<Conversation[]>('/api/trainer/messages'),
+  getConversation: (clientId: string) => apiFetch<Message[]>(`/api/trainer/messages/${clientId}`),
+  send: (clientId: string, contenido: string, rutina?: Rutina | null) =>
+    apiFetch<Message>(`/api/trainer/messages/${clientId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contenido, rutina: rutina ?? null }),
+    }),
+  markRead: (clientId: string) =>
+    apiFetch<void>(`/api/trainer/messages/${clientId}/read`, { method: 'POST' }),
+}
+
+// ─── Trainer Me ───────────────────────────────────────────────────────────────
+
+export interface TrainerMe {
+  id: string
+  username: string
+  foto_url: string | null
+  role: string
+}
+
+export const trainerMeApi = {
+  get: () => apiFetch<TrainerMe>('/api/trainer/me'),
+  update: (body: { username?: string | null; foto_url?: string | null }) =>
+    apiFetch<TrainerMe>('/api/trainer/me', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+}
+
+// ─── Admin Entrenadores ───────────────────────────────────────────────────────
+
+export interface Entrenador {
+  id: string
+  username: string
+  foto_url: string | null
+  client_count: number
+}
+
+export interface EntrenadorCliente {
+  id: string
+  nombre: string | null
+  apellido: string | null
+  dni: string | null
+  foto_url: string | null
+}
+
+export const adminEntrenadoresApi = {
+  list: () => apiFetch<Entrenador[]>('/api/admin/entrenadores'),
+  create: (username: string, password: string) =>
+    apiFetch<Entrenador>('/api/admin/entrenadores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    }),
+  update: (id: string, username: string) =>
+    apiFetch<Entrenador>(`/api/admin/entrenadores/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username }),
+    }),
+  delete: (id: string) => apiFetch<void>(`/api/admin/entrenadores/${id}`, { method: 'DELETE' }),
+  getClientes: (id: string) => apiFetch<EntrenadorCliente[]>(`/api/admin/entrenadores/${id}/clientes`),
+  assignCliente: (trainerId: string, clientId: string) =>
+    apiFetch<void>(`/api/admin/entrenadores/${trainerId}/clientes/${clientId}`, { method: 'POST' }),
+  unassignCliente: (trainerId: string, clientId: string) =>
+    apiFetch<void>(`/api/admin/entrenadores/${trainerId}/clientes/${clientId}`, { method: 'DELETE' }),
 }

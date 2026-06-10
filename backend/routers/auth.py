@@ -44,8 +44,8 @@ async def admin_login(
     if not user or not bcrypt.checkpw(form.password.encode(), user.password_hash.encode()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
 
-    token = create_access_token({"sub": str(user.id), "role": "admin"})
-    response = JSONResponse(content={"message": "ok", "role": "admin"})
+    token = create_access_token({"sub": str(user.id), "role": user.role})
+    response = JSONResponse(content={"message": "ok", "role": user.role})
     _set_token_cookie(response, token)
     return response
 

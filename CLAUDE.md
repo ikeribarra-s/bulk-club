@@ -1,6 +1,6 @@
 # Bulk Club — AI Context
 
-Gym management system. FastAPI backend + React frontend. Two distinct user types: gym clients (mobile) and admins (desktop).
+Gym management system. FastAPI backend + React frontend. Three user types: gym clients (mobile), admins (desktop), and trainers (desktop).
 
 ## Running the project
 
@@ -17,17 +17,64 @@ Vite proxies `/api/*` → `http://localhost:8000`. Never hardcode the API base U
 ## Key architectural decisions
 
 ### Auth split
-Two completely separate auth flows, same JWT/cookie mechanism:
+Three separate auth flows, same JWT/cookie mechanism:
 - **Clients**: Google OAuth (`POST /api/auth/google`) OR DNI + password (`POST /api/auth/client/token`)
 - **Admins**: username + password (`POST /api/auth/admin/token`)
+- **Trainers**: same endpoint as admins (`POST /api/auth/admin/token`) — role is read from the `usuarios.role` column
 
-JWT payload: `{ sub: user_id, role: "client"|"admin" }`. Stored in httpOnly cookie.
+JWT payload: `{ sub: user_id, role: "client"|"admin"|"trainer" }`. Stored in httpOnly cookie.
 
-Frontend route guards (`requireClient` / `requireAdmin` in `routes.tsx`) read `localStorage.role` for fast redirects. Real enforcement is in FastAPI deps `get_current_client` / `get_current_admin` in `backend/auth.py`.
+Frontend route guards (`requireClient` / `requireAdmin` / `requireTrainer` in `routes.tsx`) read `localStorage.role` for fast redirects. Real enforcement is in FastAPI deps `get_current_client` / `get_current_admin` / `get_current_trainer` in `backend/auth.py`.
 
-**401 redirect rule**: `apiFetch` reads `localStorage.role` before clearing it to decide whether to send to `/login` or `/admin/login`. Never use the request URL to infer the role — feed/upload endpoints are shared and don't contain `/admin/`.
+**401 redirect rule**: `apiFetch` reads `localStorage.role` before clearing it:
+- `admin` → `/admin/login`
+- `trainer` → `/trainer/login`
+- anything else → `/login`
+
+Never use the request URL to infer the role — feed/upload endpoints are shared.
 
 **Critical React Router v7 gotcha**: `path: '/'` matches ALL URLs as a prefix. Never put a loader on the layout route — put it on each child individually. This was a bug that caused `/admin/login` to trigger the client auth guard.
+
+### User roles and portals
+- **Clients** → `/` (mobile-first, bottom nav)
+- **Admins** → `/admin` (desktop sidebar)
+- **Trainers** → `/trainer` (desktop sidebar, limited: messages + feed)
+
+The `usuarios` table holds both admins and trainers distinguished by `role` column (`'admin'` | `'trainer'`). The `/api/auth/admin/token` endpoint issues a JWT with the actual role from the DB, so both types use the same login endpoint. The frontend redirects based on the returned `role` field.
+
+### Trainer accounts (`backend/routers/admin_entrenadores.py`)
+Admins manage trainer accounts from `/admin/entrenadores`:
+- Create trainer (username + password) → creates a `usuarios` row with `role='trainer'`
+- Delete trainer → auto-unassigns all their clients first
+- Assign/unassign clients to a trainer via `POST/DELETE /api/admin/entrenadores/{trainer_id}/clientes/{client_id}`
+- Also assignable via `PUT /api/admin/clientes/{id}/trainer` with `{trainer_id: uuid|null}`
+
+### Direct messaging (`backend/routers/messages.py` + `trainer_messages.py`)
+1-to-1 between a client and their assigned trainer. Optional `rutina` JSON attachment on any message.
+
+**Client endpoints** (`/api/messages`): get conversation, send, mark-read. Returns `{trainer, messages, unread_count}`.
+
+**Trainer endpoints** (`/api/trainer/messages`): list all conversations (assigned clients), get/send per client, mark-read.
+
+**Message sender_type values**: `'client'` or `'trainer'`. The `receiver_type` is always the opposite.
+
+**Assignment**: `clientes.trainer_id` (nullable FK → `usuarios.id`). A client without a trainer sees a "no trainer assigned" placeholder. Trainers only see clients where `trainer_id == their id`.
+
+**Polling**: frontend polls every 5 seconds (no WebSockets). Client page auto-marks read on load.
+
+### Social feed (`backend/routers/feed.py`)
+Instagram-style gym feed shared between clients, admins, and trainers. Key decisions:
+
+- **Multi-role auth**: `get_any_user` dep in `backend/auth.py` returns `AuthorInfo`. Accepts client, admin, OR trainer JWT. Trainers are mapped to `AuthorInfo(role="admin")` so their posts are treated as staff posts.
+- **Author fields are denormalized** at write time (`author_name`, `author_foto_url` stored on the post row). Old posts keep the name/photo from creation time — accepted tradeoff for query simplicity.
+- **Admin/trainer posts shown first**: `list_posts` orders by `CASE WHEN author_type='admin' THEN 0 ELSE 1 END, created_at DESC` using SQLAlchemy `case()`.
+- **Threaded comments**: flat DB storage with `parent_comment_id` (FK → same table, CASCADE). One level only. Client organizes into tree with `useMemo`.
+- **Likes**: `post_likes` has `UniqueConstraint("post_id", "cliente_id")`. Admins/trainers cannot like (returns 403). Like count returned on each toggle.
+- **Optimistic UI**: likes toggle immediately in the UI, revert on error.
+- **Rate limits** (all via slowapi): upload 10/hour per user, create post 5/min, like 30/min, comment 20/min, list 60/min.
+- **Upload rate-limit key**: extracted from JWT `sub` in `_upload_key()` to avoid shared-NAT collisions. Falls back to IP.
+- **Orphan cleanup**: before every upload, files not referenced by any `posts.imagen_url` or `clientes.foto_url`, older than 30 min, are deleted.
+- **File deletion**: `delete_upload(url)` in `backend/utils/uploads.py` — safe no-op for external URLs, path-traversal protected. Called on post delete and profile photo replacement.
 
 ### Check-in logic (`backend/routers/acceso.py`)
 `POST /api/acceso/check` runs these checks in order and short-circuits on first failure:
@@ -76,22 +123,11 @@ StrictMode runs effects twice. The scanner lifecycle tracks three flags:
 
 The `firedRef` prevents double-firing the check-in API call if StrictMode remounts.
 
-### Social feed (`backend/routers/feed.py`)
-Instagram-style gym feed shared between clients and admins. Key decisions:
-
-- **Dual-role auth**: `get_any_user` dep in `backend/auth.py` returns `AuthorInfo` dataclass (`id`, `role`, `display_name`, `foto_url`). Accepts either client or admin JWT.
-- **Author fields are denormalized** at write time (`author_name`, `author_foto_url` stored on the post row). Old posts keep the name/photo from when they were created — accepted tradeoff for query simplicity.
-- **Admin posts shown first**: `list_posts` orders by `CASE WHEN author_type='admin' THEN 0 ELSE 1 END, created_at DESC` using SQLAlchemy `case()`.
-- **Threaded comments**: flat DB storage with `parent_comment_id` (FK → same table, CASCADE). One level only. Client organizes into tree with `useMemo`.
-- **Likes**: `post_likes` has `UniqueConstraint("post_id", "cliente_id")`. Admins cannot like (returns 403). Like count returned on each toggle.
-- **Optimistic UI**: likes toggle immediately in the UI, revert on error.
-- **Rate limits** (all via slowapi): upload 10/hour per user, create post 5/min, like 30/min, comment 20/min, list 60/min.
-- **Upload rate-limit key**: extracted from JWT `sub` in `_upload_key()` to avoid shared-NAT collisions. Falls back to IP.
-- **Orphan cleanup**: before every upload, files not referenced by any `posts.imagen_url` or `clientes.foto_url`, older than 30 min, are deleted.
-- **File deletion**: `delete_upload(url)` in `backend/utils/uploads.py` — safe no-op for external URLs, path-traversal protected. Called on post delete and profile photo replacement.
-
 ### Admin profile (`backend/routers/admin_me.py`)
-`GET /api/admin/me` and `PUT /api/admin/me` — change username (uniqueness enforced) and profile photo. Widget lives in the `AdminLayout` sidebar. Uses the same `feedApi.uploadImage` as the client for photo uploads.
+`GET /api/admin/me` and `PUT /api/admin/me` — change username (uniqueness enforced) and profile photo. Widget lives in the `AdminLayout` sidebar.
+
+### Trainer profile (`backend/routers/trainer_me.py`)
+`GET /api/trainer/me` and `PUT /api/trainer/me` — same fields as admin profile. Widget lives in `TrainerLayout` sidebar. Uses `feedApi.uploadImage` for photo uploads.
 
 ### Client profile (`backend/routers/me.py` — `PUT /api/me/profile`)
 Clients can set a bio (300 char max) and profile photo from the Dashboard. Photo uploaded via `feedApi.uploadImage`, saved via `meApi.updateProfile({ foto_url })`. Old photo deleted server-side on replacement.
@@ -101,8 +137,8 @@ Clients can set a bio (300 char max) and profile photo from the Dashboard. Photo
 PostgreSQL on Supabase. Async driver: `asyncpg`. SQLAlchemy 2.x with `mapped_column` style.
 
 Schema is in `supabase_schema.sql`. Key tables:
-- `usuarios` — admin accounts (`username`, `password_hash`, `foto_url`)
-- `clientes` — gym members (`google_id` nullable, `email` nullable, `password_hash` nullable, `foto_url`, `bio`)
+- `usuarios` — admin and trainer accounts (`username`, `password_hash`, `role` ('admin'|'trainer'), `foto_url`)
+- `clientes` — gym members (`google_id` nullable, `email` nullable, `password_hash` nullable, `foto_url`, `bio`, `trainer_id` nullable FK → `usuarios`)
 - `planes` — plan types (`dias_por_semana` NULL = unlimited)
 - `membresias` — one per client per billing period; no stored status
 - `pagos` — payment records, linked to membresia optionally
@@ -112,8 +148,59 @@ Schema is in `supabase_schema.sql`. Key tables:
 - `posts` — feed posts (`author_foto_url` denormalized, `rutina` JSON column)
 - `post_likes` — unique per `(post_id, cliente_id)`
 - `post_comments` — `parent_comment_id` self-FK for one-level threading, `edited_at` nullable
+- `messages` — DMs between clients and trainers (`sender_id`, `sender_type` ('client'|'trainer'), `receiver_id`, `receiver_type`, `contenido`, `rutina` JSONB nullable, `read_at` nullable)
 
-`DATABASE_URL` must use `postgresql+asyncpg://` scheme (not `postgresql://`).
+**Migrations applied manually (not in supabase_schema.sql yet):**
+```sql
+ALTER TABLE usuarios ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'admin';
+ALTER TABLE clientes ADD COLUMN trainer_id UUID REFERENCES usuarios(id) ON DELETE SET NULL;
+CREATE TABLE messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    sender_id UUID NOT NULL,
+    sender_type VARCHAR(10) NOT NULL,
+    receiver_id UUID NOT NULL,
+    receiver_type VARCHAR(10) NOT NULL,
+    contenido TEXT NOT NULL,
+    rutina JSONB,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX idx_messages_participants ON messages(sender_id, receiver_id);
+```
+
+`DATABASE_URL` must use `postgresql+asyncpg://` scheme (not `postgresql://`). The `database.py` module auto-converts `postgresql://` → `postgresql+asyncpg://` as a fallback.
+
+## Backend routers
+
+| File | Prefix | Auth |
+|---|---|---|
+| `auth.py` | `/api/auth` | public |
+| `me.py` | `/api/me` | client |
+| `acceso.py` | `/api/acceso` | client |
+| `feed.py` | `/api/feed` | any (client/admin/trainer) |
+| `messages.py` | `/api/messages` | client |
+| `trainer_messages.py` | `/api/trainer/messages` | trainer |
+| `trainer_me.py` | `/api/trainer/me` | trainer |
+| `admin_me.py` | `/api/admin/me` | admin |
+| `admin_clientes.py` | `/api/admin/clientes` | admin |
+| `admin_membresias.py` | `/api/admin/membresias` | admin |
+| `admin_pagos.py` | `/api/admin/pagos` | admin |
+| `admin_planes.py` | `/api/admin/planes` | admin |
+| `admin_productos.py` | `/api/admin/productos` | admin |
+| `admin_ventas.py` | `/api/admin/ventas` | admin |
+| `admin_accesos.py` | `/api/admin/accesos` | admin |
+| `admin_dashboard.py` | `/api/admin/dashboard` | admin |
+| `admin_entrenadores.py` | `/api/admin/entrenadores` | admin |
+
+## Frontend portals and routes
+
+**Client** (`/`): Dashboard, Acceso (QR check-in), Personal (feed), Mensajes (chat with trainer)
+
+**Admin** (`/admin`): Dashboard, Clientes, Planes, Membresías, Pagos, Stock, Ventas, Accesos, QR, Feed, Entrenadores
+
+**Trainer** (`/trainer`): Mensajes (chat with assigned clients), Feed
+
+Login pages: `/login` (client), `/admin/login` (admin — also works for trainer, redirects based on returned role), `/trainer/login` (trainer-only, rejects non-trainer accounts)
 
 ## Frontend conventions
 
@@ -131,7 +218,7 @@ import bcrypt
 print(bcrypt.hashpw(b"yourpassword", bcrypt.gensalt()).decode())
 ```
 
-Admin password reset is done manually in the DB. Client password can be reset to their DNI via `POST /api/admin/clientes/{id}/reset-password`.
+Admin/trainer password reset is done manually in the DB. Client password can be reset to their DNI via `POST /api/admin/clientes/{id}/reset-password`.
 
 ## Seed data
 
@@ -158,3 +245,4 @@ The uvicorn command is always `uvicorn backend.main:app --reload` from the repo 
 - Individual client detail page (`/admin/clientes/:id`)
 - `notas` field not exposed in the pagos create form UI
 - Google OAuth requires a real `GOOGLE_CLIENT_ID` — DNI/password login works without it
+- Trainer password reset (currently manual in DB only)

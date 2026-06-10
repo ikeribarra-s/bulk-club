@@ -16,7 +16,13 @@ import AdminAccesos from './pages/admin/Accesos'
 import AdminPlanes from './pages/admin/Planes'
 import AdminQR from './pages/admin/QR'
 import Personal from './pages/client/Personal'
+import Mensajes from './pages/client/Mensajes'
 import AdminPersonal from './pages/admin/Personal'
+import AdminEntrenadores from './pages/admin/Entrenadores'
+import TrainerLayout from './components/TrainerLayout'
+import TrainerLogin from './pages/trainer/Login'
+import TrainerMensajes from './pages/trainer/Mensajes'
+import TrainerFeed from './pages/trainer/Feed'
 
 function requireClient() {
   if (localStorage.getItem('role') !== 'client') return redirect('/login')
@@ -25,6 +31,11 @@ function requireClient() {
 
 function requireAdmin() {
   if (localStorage.getItem('role') !== 'admin') return redirect('/admin/login')
+  return null
+}
+
+function requireTrainer() {
+  if (localStorage.getItem('role') !== 'trainer') return redirect('/trainer/login')
   return null
 }
 
@@ -39,6 +50,7 @@ export const router = createBrowserRouter([
       { index: true, Component: ClientDashboard, loader: requireClient },
       { path: 'acceso', Component: Acceso, loader: requireClient },
       { path: 'personal', Component: Personal, loader: requireClient },
+      { path: 'mensajes', Component: Mensajes, loader: requireClient },
     ],
   },
   // ─── Admin portal ────────────────────────────────────────────────────────────
@@ -58,6 +70,18 @@ export const router = createBrowserRouter([
       { path: 'accesos', Component: AdminAccesos },
       { path: 'qr', Component: AdminQR },
       { path: 'personal', Component: AdminPersonal },
+      { path: 'entrenadores', Component: AdminEntrenadores },
+    ],
+  },
+  // ─── Trainer portal ──────────────────────────────────────────────────────────
+  { path: '/trainer/login', Component: TrainerLogin },
+  {
+    path: '/trainer',
+    Component: TrainerLayout,
+    loader: requireTrainer,
+    children: [
+      { index: true, Component: TrainerMensajes },
+      { path: 'feed', Component: TrainerFeed },
     ],
   },
 ])

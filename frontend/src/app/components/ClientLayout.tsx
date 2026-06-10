@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router'
-import { Dumbbell, QrCode, LogOut, UserCircle, Rss } from 'lucide-react'
+import { Dumbbell, QrCode, LogOut, UserCircle, Rss, MessageCircle } from 'lucide-react'
 import { authApi } from '../api'
 import { toast } from 'sonner'
 
@@ -48,6 +48,15 @@ export default function ClientLayout() {
           >
             <Rss size={20} />
             Feed
+          </NavLink>
+          <NavLink
+            to="/mensajes"
+            className={({ isActive }) =>
+              `flex-1 flex flex-col items-center py-3 text-xs gap-1 transition-colors ${isActive ? 'text-black font-semibold' : 'text-gray-400'}`
+            }
+          >
+            <MessageCircle size={20} />
+            Chat
           </NavLink>
           <NavLink
             to="/acceso"
