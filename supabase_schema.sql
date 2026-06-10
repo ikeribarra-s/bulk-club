@@ -83,7 +83,9 @@ create table if not exists accesos (
                   'ya_ingreso_hoy',
                   'plan_agotado',
                   'cuenta_deshabilitada',
-                  'sin_membresia'
+                  'sin_membresia',
+                  'molinete_error',
+                  'test'
                 )
               )
 );

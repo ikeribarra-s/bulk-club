@@ -8,6 +8,7 @@ from backend.limiter import limiter
 from backend.routers import (
     auth,
     acceso,
+    door_agent,
     me,
     feed,
     messages,
@@ -39,6 +40,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api")
 app.include_router(acceso.router, prefix="/api")
+app.include_router(door_agent.router, prefix="/api")
 app.include_router(me.router, prefix="/api")
 app.include_router(feed.router, prefix="/api")
 app.include_router(messages.router, prefix="/api")

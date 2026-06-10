@@ -11,6 +11,10 @@ build/
 # Environment
 .env
 
+# Door agent
+agent/*.log*
+agent/*.spec
+
 # Node / Frontend
 node_modules/
 frontend/dist/

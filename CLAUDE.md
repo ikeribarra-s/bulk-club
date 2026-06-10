@@ -92,6 +92,19 @@ Instagram-style gym feed shared between clients, admins, and trainers. Key decis
 
 This prevents DB spam from repeated scan attempts.
 
+**Test accounts**: clients whose DNI is in the `TEST_CLIENT_DNIS` env var (JSON list) bypass every membership rule on check-in (no daily limit, no membership needed). Their accesses are logged as `permitido` with `motivo='test'`. A test client exists in the DB: DNI `00000000`, password `00000000`.
+
+### Physical door opening (Hikvision turnstile)
+See `CONTEXT.md` for the full architecture. The backend on Render cannot reach the turnstile (private LAN), so a **local agent** (`agent/door_agent.py`, runs on a gym PC with Ethernet to the Hikvision unit) keeps an outbound WebSocket open to the backend and executes ISAPI open commands.
+
+- **WS endpoint**: `/api/door/ws` (`backend/routers/door_agent.py`). Agent authenticates with `DOOR_AGENT_TOKEN` (Bearer header or `?token=`). One agent at a time — a new connection replaces the old.
+- **Manager**: `backend/door_manager.py` singleton. `open_door()` sends `{"type":"open","request_id",...}` and awaits the agent's ack (future keyed by `request_id`, timeout `DOOR_OPEN_TIMEOUT`). Never raises.
+- **Check-in hook**: in `acceso.py`, the door is opened **before** logging `permitido` — a failed open logs `denegado`/`molinete_error` instead, so the daily check-in isn't consumed and the client can retry.
+- **Feature flag**: `DOOR_CONTROL_ENABLED` (default `false`). When off, check-in behaves exactly as before — required for local dev without the turnstile.
+- **Admin utilities**: `GET /api/door/status` (agent connected?), `POST /api/door/open` (manual open, e2e test).
+- **Agent**: shared core in `agent/molinete_core.py` (dedupes `request_id`s 5 min window, reconnects every 5 s, WS ping/pong heartbeat 20 s/10 s). Two frontends: `agent/molinete_app.py` (tkinter GUI, compiled to `Molinete.exe` via `agent/build_exe.bat`, config in `%APPDATA%\Molinete\config.json`, "start with Windows" via HKCU Run key) and `agent/door_agent.py` (headless CLI, config via `agent/.env`). See `agent/README.md`.
+- **Backend env vars (Render)**: `DOOR_CONTROL_ENABLED`, `DOOR_AGENT_TOKEN`, optional `DOOR_NUMBER` (1=entrada), `DOOR_OPEN_TIMEOUT`.
+
 ### Membership status
 There is no stored `activa` column on `membresias`. Active = `fecha_vencimiento >= today`, computed at query time everywhere. The `activa` field in API responses is always derived.
 
@@ -177,6 +190,7 @@ CREATE INDEX idx_messages_participants ON messages(sender_id, receiver_id);
 | `auth.py` | `/api/auth` | public |
 | `me.py` | `/api/me` | client |
 | `acceso.py` | `/api/acceso` | client |
+| `door_agent.py` | `/api/door` | WS: agent token / REST: admin |
 | `feed.py` | `/api/feed` | any (client/admin/trainer) |
 | `messages.py` | `/api/messages` | client |
 | `trainer_messages.py` | `/api/trainer/messages` | trainer |

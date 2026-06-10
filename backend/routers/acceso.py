@@ -5,7 +5,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import get_current_client
+from backend.config import settings
 from backend.database import get_db
+from backend.door_manager import door_manager
 from backend.models.acceso import Acceso
 from backend.models.cliente import Cliente
 from backend.models.membresia import Membresia
@@ -32,6 +34,22 @@ async def _log(db: AsyncSession, cliente_id, resultado: str, motivo: str | None,
     await db.commit()
 
 
+async def _open_door(db: AsyncSession, cliente_id, today: date) -> CheckResult | None:
+    """Open the turnstile if door control is enabled. Returns a failure
+    CheckResult, or None if opened (or disabled)."""
+    if not settings.DOOR_CONTROL_ENABLED:
+        return None
+    opened, error = await door_manager.open_door(settings.DOOR_NUMBER, settings.DOOR_OPEN_TIMEOUT)
+    if opened:
+        return None
+    await _log(db, cliente_id, "denegado", "molinete_error", today)
+    return CheckResult(
+        ok=False,
+        message="No pudimos abrir el molinete. Avisá en recepción.",
+        motivo="molinete_error",
+    )
+
+
 @router.post("/check", response_model=CheckResult)
 async def check_acceso(
     cliente: Cliente = Depends(get_current_client),
@@ -39,6 +57,15 @@ async def check_acceso(
 ):
     now = datetime.now(timezone.utc)
     today = date.today()
+
+    # Test accounts: bypass every membership rule (daily limit, expiry, weekly
+    # plan). Accesses are logged with motivo='test' so they're filterable.
+    if cliente.dni and cliente.dni in settings.TEST_CLIENT_DNIS:
+        failure = await _open_door(db, cliente.id, today)
+        if failure is not None:
+            return failure
+        await _log(db, cliente.id, "permitido", "test")
+        return CheckResult(ok=True, message="Acceso de prueba OK")
 
     # a) Auto-disable after 90 days of inactivity
     last_ok = await db.execute(
@@ -113,6 +140,12 @@ async def check_acceso(
                 message=f"Ya usaste los {plan.dias_por_semana} días de tu plan esta semana.",
                 motivo="plan_agotado",
             )
+
+    # g) Open the turnstile BEFORE logging "permitido" — a failed open must not
+    # consume the daily check-in (rule e would block the retry otherwise).
+    failure = await _open_door(db, cliente.id, today)
+    if failure is not None:
+        return failure
 
     await _log(db, cliente.id, "permitido", None)
     nombre = cliente.nombre or "campeón"
