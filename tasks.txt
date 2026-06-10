@@ -1,0 +1,34 @@
+Mejorar estética del dashboard
+-------------
+El tema de clientes esta bien
+-------------
+Tiene que haber refresh automatico cuando agregamos clientes,sacamos etc...
+-------------
+Cuando agregamos una membresia se tiene que poder escribir el dni o nombre, seria campo que se puede escribir con Smart search
+-------------
+Implementar rate limiting en los endpoints.
+-------------
+Implementar mejoras de cachee eages.
+-------------
+Sacar el botón de renovar del apartado de membresías.
+-------------
+Que se puedan editar las membresías
+-------------
+En editar stock que salga el nombre de los campos arriba.
+-----------------
+En entrenadores que los entrenadores puedan mandar archivos pdf y Excel, ver optimización para que no pesen demasiado
+-------------
+No cargar las fotos viejas del feed (tener que scrollear)
+-------------
+Optimización en el guardado y que no se puedan subir muchas fotos.
+-------------
+Cuando renovamos una membresia si por ejemplo fue con 4 días de demora se da un aviso, asi ajustamos manualmente la demora en el pago y decidimos si descontarlo o no. 
+-------------
+Migrado de datos
+-------------
+Cambiar el trainer a entrenador
+-------------
+Agregar alertas de :
+Error de contraseña
+-------------
+Notificaciones de mensajes

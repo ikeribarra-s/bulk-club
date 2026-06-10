@@ -1,18 +1,63 @@
 # Bulk Club — AI Context
 
-Gym management system. FastAPI backend + React frontend. Three user types: gym clients (mobile), admins (desktop), and trainers (desktop).
+Gym management system for a real gym going to production. FastAPI backend (deployed on Render) + React frontend + a local Windows agent ("Molinete") that physically opens a Hikvision turnstile. Three user types: gym clients (mobile), admins (desktop), and trainers (desktop).
+
+## System overview
+
+```
+[Client phone]  ──QR scan──►  [React frontend (Vite)]
+                                    │ /api/*
+                                    ▼
+                              [FastAPI backend]  ◄──WebSocket──  [Molinete.exe — gym PC]
+                                    │                                  │ ISAPI (HTTP Digest)
+                              [Supabase Postgres]                      ▼
+                                                          [Hikvision DS-K3M230 turnstile
+                                                           @ 192.168.1.202]
+```
+
+The backend cannot reach the turnstile (private LAN), so the agent keeps an *outbound* WebSocket open to the backend and executes door-open commands locally. No router ports are opened. Full protocol spec in `CONTEXT.md` and `agent/README.md`.
+
+## Repository layout
+
+- `backend/` — FastAPI app (`main.py`, `auth.py`, `config.py`, `database.py`, `door_manager.py`, `limiter.py`, `models/`, `schemas/`, `routers/`, `utils/`)
+- `frontend/` — React 19 + Vite + TS. All pages under `src/app/pages/{client,admin,trainer}/`, shared layouts in `src/app/components/`, all API calls in `src/app/api.ts`, routing in `src/app/routes.tsx`
+- `agent/` — the local turnstile agent (see "Physical door opening" below)
+- `supabase_schema.sql` — DB schema (kept up to date with applied migrations)
+- `CONTEXT.md` — door-control architecture and Hikvision ISAPI reference
+- `techsur/` — unrelated legacy project, ignore it
 
 ## Running the project
 
 ```bash
 # Backend (from repo root, venv activated)
 uvicorn backend.main:app --reload
+# add --host 0.0.0.0 if another machine on the LAN must reach it (e.g. Molinete agent testing)
 
 # Frontend
 cd frontend && pnpm dev
+
+# Local agent (console version, dev)
+python agent/door_agent.py
 ```
 
 Vite proxies `/api/*` → `http://localhost:8000`. Never hardcode the API base URL.
+
+## Environment variables (backend `.env`)
+
+| Var | Notes |
+|---|---|
+| `DATABASE_URL` | Supabase Postgres. Must be `postgresql+asyncpg://` (auto-converted from `postgresql://` as fallback) |
+| `SECRET_KEY`, `ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT signing |
+| `ALLOWED_ORIGINS` | JSON list, CORS |
+| `COOKIE_SECURE` | `true` in production (HTTPS) |
+| `GOOGLE_CLIENT_ID` | Google OAuth for clients; DNI/password login works without it |
+| `DOOR_CONTROL_ENABLED` | default `false`. When off, check-in never contacts the agent (required for dev without turnstile) |
+| `DOOR_AGENT_TOKEN` | shared secret for the agent WebSocket. Empty = all agent connections rejected |
+| `DOOR_NUMBER` | `1` = entrance (default), `2` = exit |
+| `DOOR_OPEN_TIMEOUT` | seconds to wait for the agent's ack (default 5) |
+| `TEST_CLIENT_DNIS` | JSON list of DNIs that bypass all check-in rules (see Test accounts) |
+
+`pydantic-settings` loads these once at startup — **uvicorn `--reload` does NOT re-read `.env`**; restart the process after changing it.
 
 ## Key architectural decisions
 
@@ -22,7 +67,7 @@ Three separate auth flows, same JWT/cookie mechanism:
 - **Admins**: username + password (`POST /api/auth/admin/token`)
 - **Trainers**: same endpoint as admins (`POST /api/auth/admin/token`) — role is read from the `usuarios.role` column
 
-JWT payload: `{ sub: user_id, role: "client"|"admin"|"trainer" }`. Stored in httpOnly cookie.
+JWT payload: `{ sub: user_id, role: "client"|"admin"|"trainer" }`. Stored in httpOnly cookie named `token`.
 
 Frontend route guards (`requireClient` / `requireAdmin` / `requireTrainer` in `routes.tsx`) read `localStorage.role` for fast redirects. Real enforcement is in FastAPI deps `get_current_client` / `get_current_admin` / `get_current_trainer` in `backend/auth.py`.
 
@@ -84,6 +129,7 @@ Instagram-style gym feed shared between clients, admins, and trainers. Key decis
 4. `fecha_vencimiento >= today`?
 5. Already checked in today?
 6. Weekly day count >= `plan.dias_por_semana`? (NULL = unlimited)
+7. Physical door open (only if `DOOR_CONTROL_ENABLED` — see below)
 
 **Log rules** (enforced inside `_log()`):
 - `permitido` → always logged
@@ -92,18 +138,22 @@ Instagram-style gym feed shared between clients, admins, and trainers. Key decis
 
 This prevents DB spam from repeated scan attempts.
 
-**Test accounts**: clients whose DNI is in the `TEST_CLIENT_DNIS` env var (JSON list) bypass every membership rule on check-in (no daily limit, no membership needed). Their accesses are logged as `permitido` with `motivo='test'`. A test client exists in the DB: DNI `00000000`, password `00000000`.
+**Test accounts**: clients whose DNI is in the `TEST_CLIENT_DNIS` env var bypass every membership rule on check-in (no daily limit, no membership needed) — but the door still opens for real. Their accesses are logged as `permitido` with `motivo='test'`. A test client exists in the DB: DNI `00000000`, password `00000000`, with a never-expiring "Test (ilimitado)" membership (plan has `activo=false` so it's hidden from real plan options). **Remove/disable this account or the env var before real launch.**
 
 ### Physical door opening (Hikvision turnstile)
-See `CONTEXT.md` for the full architecture. The backend on Render cannot reach the turnstile (private LAN), so a **local agent** (`agent/door_agent.py`, runs on a gym PC with Ethernet to the Hikvision unit) keeps an outbound WebSocket open to the backend and executes ISAPI open commands.
+See `CONTEXT.md` for the full architecture and ISAPI command reference.
 
-- **WS endpoint**: `/api/door/ws` (`backend/routers/door_agent.py`). Agent authenticates with `DOOR_AGENT_TOKEN` (Bearer header or `?token=`). One agent at a time — a new connection replaces the old.
-- **Manager**: `backend/door_manager.py` singleton. `open_door()` sends `{"type":"open","request_id",...}` and awaits the agent's ack (future keyed by `request_id`, timeout `DOOR_OPEN_TIMEOUT`). Never raises.
-- **Check-in hook**: in `acceso.py`, the door is opened **before** logging `permitido` — a failed open logs `denegado`/`molinete_error` instead, so the daily check-in isn't consumed and the client can retry.
-- **Feature flag**: `DOOR_CONTROL_ENABLED` (default `false`). When off, check-in behaves exactly as before — required for local dev without the turnstile.
-- **Admin utilities**: `GET /api/door/status` (agent connected?), `POST /api/door/open` (manual open, e2e test).
-- **Agent**: shared core in `agent/molinete_core.py` (dedupes `request_id`s 5 min window, reconnects every 5 s, WS ping/pong heartbeat 20 s/10 s). Two frontends: `agent/molinete_app.py` (tkinter GUI, compiled to `Molinete.exe` via `agent/build_exe.bat`, config in `%APPDATA%\Molinete\config.json`, "start with Windows" via HKCU Run key) and `agent/door_agent.py` (headless CLI, config via `agent/.env`). See `agent/README.md`.
-- **Backend env vars (Render)**: `DOOR_CONTROL_ENABLED`, `DOOR_AGENT_TOKEN`, optional `DOOR_NUMBER` (1=entrada), `DOOR_OPEN_TIMEOUT`.
+- **WS endpoint**: `/api/door/ws` (`backend/routers/door_agent.py`). Agent authenticates with `DOOR_AGENT_TOKEN` (Bearer header or `?token=`), compared with `secrets.compare_digest`. One agent at a time — a new connection replaces the old (close code 1012). **Never run two agents against the same backend: they kick each other in a loop.**
+- **Manager**: `backend/door_manager.py` singleton. `open_door()` sends `{"type":"open","request_id","door"}` and awaits the agent's `{"type":"ack","request_id","ok","error"}` (future keyed by `request_id`, timeout `DOOR_OPEN_TIMEOUT`). Returns `(ok, error)`, never raises. `agente_desconectado` when no agent.
+- **Check-in hook**: the door is opened **before** logging `permitido` — a failed open logs `denegado`/`molinete_error` instead, so the daily check-in isn't consumed and the client can retry.
+- **Admin utilities**: `GET /api/door/status` (enabled? agent connected?), `POST /api/door/open` (manual open — end-to-end test without scanning).
+- **Agent** (`agent/` folder):
+  - `molinete_core.py` — shared logic: `AgentConfig` dataclass, `abrir_molinete()` (ISAPI PUT with Digest auth), `DoorAgent` (connect/reconnect every 5 s, WS ping/pong heartbeat 20 s/10 s, `request_id` dedup window 5 min, `mock` mode that simulates openings).
+  - `molinete_app.py` — tkinter GUI, compiled to **`Molinete.exe`** via `agent/build_exe.bat` (PyInstaller onefile/windowed). Config in `%APPDATA%\Molinete\config.json`, log in `%APPDATA%\Molinete\molinete.log`. Features: status indicator, config form, "Probar apertura" (direct ISAPI test), "Iniciar con Windows" (HKCU Run key). Auto-connects on launch if config is valid; if validation fails it shows a dialog and stays in "Detenido".
+  - `door_agent.py` — headless CLI version, config via `agent/.env` (see `.env.example`).
+- **Turnstile**: Hikvision DS-K3M230 @ `192.168.1.202`, HTTP Digest auth. Door 1 = entrance, door 2 = exit. Use an operator user (door-control permission only), not the device admin.
+- **Token debugging**: a 403 on the WS handshake = token mismatch (or empty server token). The token field in the GUI is masked — when in doubt, write `%APPDATA%\Molinete\config.json` directly and restart the app (editing it while the app runs gets overwritten by "Guardar y reconectar").
+- **Render free tier caveat**: the service spins down on idle, killing the agent's WebSocket. The agent reconnects ~5 s after wake, but the first scan after a cold start may fail with `molinete_error` and need a retry.
 
 ### Membership status
 There is no stored `activa` column on `membresias`. Active = `fecha_vencimiento >= today`, computed at query time everywhere. The `activa` field in API responses is always derived.
@@ -155,7 +205,7 @@ Schema is in `supabase_schema.sql`. Key tables:
 - `planes` — plan types (`dias_por_semana` NULL = unlimited)
 - `membresias` — one per client per billing period; no stored status
 - `pagos` — payment records, linked to membresia optionally
-- `accesos` — check-in log (`resultado`: `'permitido'` | `'denegado'`)
+- `accesos` — check-in log (`resultado`: `'permitido'` | `'denegado'`; `motivo` constrained by `accesos_motivo_check` to: `cuota_vencida`, `ya_ingreso_hoy`, `plan_agotado`, `cuenta_deshabilitada`, `sin_membresia`, `molinete_error`, `test` — **adding a new motivo requires altering that constraint**)
 - `productos` — stock items
 - `ventas_productos` — product sales on client tab (`pagado` boolean)
 - `posts` — feed posts (`author_foto_url` denormalized, `rutina` JSON column)
@@ -180,6 +230,7 @@ CREATE TABLE messages (
 );
 CREATE INDEX idx_messages_participants ON messages(sender_id, receiver_id);
 ```
+(The `accesos_motivo_check` extension with `molinete_error`/`test` was applied manually AND is reflected in `supabase_schema.sql`.)
 
 `DATABASE_URL` must use `postgresql+asyncpg://` scheme (not `postgresql://`). The `database.py` module auto-converts `postgresql://` → `postgresql+asyncpg://` as a fallback.
 
@@ -208,9 +259,9 @@ CREATE INDEX idx_messages_participants ON messages(sender_id, receiver_id);
 
 ## Frontend portals and routes
 
-**Client** (`/`): Dashboard, Acceso (QR check-in), Personal (feed), Mensajes (chat with trainer)
+**Client** (`/`): Dashboard, Acceso (QR check-in), Personal (feed), Mensajes (chat with trainer), Onboarding, Login
 
-**Admin** (`/admin`): Dashboard, Clientes, Planes, Membresías, Pagos, Stock, Ventas, Accesos, QR, Feed, Entrenadores
+**Admin** (`/admin`): Dashboard, Clientes, Planes, Membresías, Pagos, Stock, Ventas, Accesos, QR, Personal (feed), Mensajes, Entrenadores
 
 **Trainer** (`/trainer`): Mensajes (chat with assigned clients), Feed
 
@@ -241,9 +292,9 @@ python seed_fake_data.py           # insert fake plans, clients, accesos, ventas
 python seed_fake_data.py --clear   # drop everything and re-seed
 ```
 
-## Phone / ngrok testing
+## Testing on other devices
 
-Camera access requires HTTPS. Use ngrok to tunnel the Vite dev server:
+**Phone (camera needs HTTPS)** — ngrok tunnel to Vite:
 ```bash
 ngrok http 5173
 ```
@@ -252,7 +303,16 @@ Add the resulting `https://xxx.ngrok-free.app` to:
 2. `.env` `ALLOWED_ORIGINS`
 3. `vite.config.ts` already has `allowedHosts: true` so no Vite changes needed
 
+**Another PC on the LAN (e.g. Molinete agent)** — run uvicorn with `--host 0.0.0.0`, allow TCP 8000 in Windows Firewall (private networks), and point the agent at `ws://<this-pc-lan-ip>:8000/api/door/ws`. Verify reachability with `http://<ip>:8000` in a browser first.
+
 The uvicorn command is always `uvicorn backend.main:app --reload` from the repo root. If you see old TechSur routes (`/productos/`, `/permutas/`) in the OpenAPI docs, you're running the wrong app — check the working directory.
+
+## Production deployment (Render)
+
+- Backend deploys to Render; `uvicorn[standard]` already includes WebSocket support.
+- Required env vars on Render: everything in the table above; specifically set `DOOR_CONTROL_ENABLED=true`, a strong `DOOR_AGENT_TOKEN` (same value configured in Molinete on the gym PC), `COOKIE_SECURE=true`, and production `ALLOWED_ORIGINS`.
+- Molinete config on the gym PC then points at `wss://<app>.onrender.com/api/door/ws` (wss, not ws).
+- Pre-launch checklist: remove `TEST_CLIENT_DNIS` (or the test client), create an operator user on the turnstile (stop using the device admin), confirm door 1 vs 2 direction.
 
 ## What's not implemented yet
 
@@ -260,3 +320,4 @@ The uvicorn command is always `uvicorn backend.main:app --reload` from the repo 
 - `notas` field not exposed in the pagos create form UI
 - Google OAuth requires a real `GOOGLE_CLIENT_ID` — DNI/password login works without it
 - Trainer password reset (currently manual in DB only)
+- Turnstile "access granted" beep (planned: buzzer on the agent — out of scope for now, see CONTEXT.md)
