@@ -116,10 +116,19 @@ Instagram-style gym feed shared between clients, admins, and trainers. Key decis
 - **Threaded comments**: flat DB storage with `parent_comment_id` (FK → same table, CASCADE). One level only. Client organizes into tree with `useMemo`.
 - **Likes**: `post_likes` has `UniqueConstraint("post_id", "cliente_id")`. Admins/trainers cannot like (returns 403). Like count returned on each toggle.
 - **Optimistic UI**: likes toggle immediately in the UI, revert on error.
-- **Rate limits** (all via slowapi): upload 10/hour per user, create post 5/min, like 30/min, comment 20/min, list 60/min.
-- **Upload rate-limit key**: extracted from JWT `sub` in `_upload_key()` to avoid shared-NAT collisions. Falls back to IP.
+- **Rate limits** (all via slowapi): upload 10/hour, create post 5/min, like 30/min, comment 20/min, list 60/min — keyed per user (see Rate limiting section).
 - **Orphan cleanup**: before every upload, files not referenced by any `posts.imagen_url` or `clientes.foto_url`, older than 30 min, are deleted.
 - **File deletion**: `delete_upload(url)` in `backend/utils/uploads.py` — safe no-op for external URLs, path-traversal protected. Called on post delete and profile photo replacement.
+
+### Rate limiting (`backend/limiter.py`)
+slowapi everywhere, **keyed by authenticated user ID** (JWT `sub` from the cookie) with IP fallback (`user_or_ip_key`). Never key by IP alone — all gym clients share the gym Wi-Fi NAT (one public IP) and would share one bucket.
+
+- **Default safety net**: `300/minute` applied via `SlowAPIMiddleware` to every endpoint **without** an explicit `@limiter.limit` (admin CRUD, etc.). The middleware skips decorated routes (no double-counting) and ignores the door agent WebSocket (non-HTTP scope). It is added *before* `CORSMiddleware` in `main.py` so CORS stays outermost and 429s get CORS headers.
+- **Explicit limits**: auth logins 10–20/min (IP-keyed, unauthenticated); `acceso/check` 10/min (expensive: queries + up to 5 s door wait); messages GET 30/min / POST 20/min (frontend polls every 5 s = 12/min); trainer conversation GET + mark-read 60/min (chat switching); `me/*` GETs 30/min; `door/open` 10/min; feed limits listed above.
+- **Decorated handlers need `request: Request`** as a parameter — slowapi requirement; forgetting it raises at startup.
+- **429 response**: custom handler in `main.py` returns `{"detail": ...}` (the key `apiFetch` reads), plus `Retry-After`/`X-RateLimit-*` headers (`headers_enabled=True`).
+- **Storage is in-memory**: counters reset on restart and are per-process. Fine for a single Render instance; switch to Redis storage if ever scaling to multiple workers/instances.
+- **Render caveat**: the IP fallback only sees the real client IP if uvicorn trusts `X-Forwarded-For`. On Render set the env var `FORWARDED_ALLOW_IPS='*'` (or add `--proxy-headers --forwarded-allow-ips='*'` to the start command). Otherwise every unauthenticated visitor shares the proxy's IP — and the 10/min login limit becomes global, locking out legitimate logins.
 
 ### Check-in logic (`backend/routers/acceso.py`)
 `POST /api/acceso/check` runs these checks in order and short-circuits on first failure:
@@ -311,6 +320,7 @@ The uvicorn command is always `uvicorn backend.main:app --reload` from the repo 
 
 - Backend deploys to Render; `uvicorn[standard]` already includes WebSocket support.
 - Required env vars on Render: everything in the table above; specifically set `DOOR_CONTROL_ENABLED=true`, a strong `DOOR_AGENT_TOKEN` (same value configured in Molinete on the gym PC), `COOKIE_SECURE=true`, and production `ALLOWED_ORIGINS`.
+- Set `FORWARDED_ALLOW_IPS='*'` on Render so uvicorn trusts `X-Forwarded-For` — without it, IP-keyed rate limits (logins) see every visitor as the proxy IP and share one bucket.
 - Molinete config on the gym PC then points at `wss://<app>.onrender.com/api/door/ws` (wss, not ws).
 - Pre-launch checklist: remove `TEST_CLIENT_DNIS` (or the test client), create an operator user on the turnstile (stop using the device admin), confirm door 1 vs 2 direction.
 

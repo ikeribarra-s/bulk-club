@@ -5,12 +5,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
-from jose import JWTError, jwt
 from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import AuthorInfo, get_any_user
-from backend.config import settings
 from backend.database import get_db
 from backend.limiter import limiter
 from backend.models.post import Post
@@ -31,21 +29,6 @@ _ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 
 router = APIRouter(prefix="/feed", tags=["Feed"])
-
-
-# ─── Per-user rate-limit key ──────────────────────────────────────────────────
-
-def _upload_key(request: Request) -> str:
-    """Rate-limit uploads by authenticated user ID, not by IP (avoids shared-NAT collisions)."""
-    token = request.cookies.get("token")
-    if token:
-        try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-            if sub := payload.get("sub"):
-                return f"upload_user:{sub}"
-        except JWTError:
-            pass
-    return f"upload_ip:{(request.client.host if request.client else 'unknown')}"
 
 
 # ─── Orphan cleanup ───────────────────────────────────────────────────────────
@@ -73,7 +56,7 @@ async def _cleanup_orphans(db: AsyncSession) -> None:
 # ─── File upload ──────────────────────────────────────────────────────────────
 
 @router.post("/upload")
-@limiter.limit("10/hour", key_func=_upload_key)
+@limiter.limit("10/hour")
 async def upload_image(
     request: Request,
     file: UploadFile = File(...),

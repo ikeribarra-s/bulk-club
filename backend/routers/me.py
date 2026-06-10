@@ -1,6 +1,6 @@
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.auth import get_current_client
 from backend.utils.uploads import delete_upload
 from backend.database import get_db
+from backend.limiter import limiter
 from backend.models.acceso import Acceso
 from backend.models.cliente import Cliente
 from backend.models.membresia import Membresia
@@ -28,7 +29,9 @@ class ProfileUpdate(BaseModel):
 
 
 @router.post("/onboarding")
+@limiter.limit("5/minute")
 async def onboarding(
+    request: Request,
     body: OnboardingIn,
     cliente: Cliente = Depends(get_current_client),
     db: AsyncSession = Depends(get_db),
@@ -48,14 +51,18 @@ async def onboarding(
 
 
 @router.get("", response_model=ClienteMe)
+@limiter.limit("30/minute")
 async def get_me(
+    request: Request,
     cliente: Cliente = Depends(get_current_client),
 ):
     return cliente
 
 
 @router.get("/status")
+@limiter.limit("30/minute")
 async def get_status(
+    request: Request,
     cliente: Cliente = Depends(get_current_client),
     db: AsyncSession = Depends(get_db),
 ):
@@ -91,7 +98,9 @@ async def get_status(
 
 
 @router.get("/accesos", response_model=list[AccesoOut])
+@limiter.limit("30/minute")
 async def get_mis_accesos(
+    request: Request,
     cliente: Cliente = Depends(get_current_client),
     db: AsyncSession = Depends(get_db),
 ):
@@ -107,7 +116,9 @@ async def get_mis_accesos(
 
 
 @router.get("/tab", response_model=TabBalance)
+@limiter.limit("30/minute")
 async def get_tab(
+    request: Request,
     cliente: Cliente = Depends(get_current_client),
     db: AsyncSession = Depends(get_db),
 ):
@@ -139,7 +150,9 @@ async def get_tab(
 
 
 @router.put("/profile")
+@limiter.limit("10/minute")
 async def update_profile(
+    request: Request,
     body: ProfileUpdate,
     cliente: Cliente = Depends(get_current_client),
     db: AsyncSession = Depends(get_db),

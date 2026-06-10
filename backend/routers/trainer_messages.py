@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import get_current_trainer
 from backend.database import get_db
+from backend.limiter import limiter
 from backend.models.cliente import Cliente
 from backend.models.message import Message
 from backend.models.usuario import Usuario
@@ -29,7 +30,9 @@ def _conversation_filter(client_id: uuid.UUID, trainer_id: uuid.UUID):
 
 
 @router.get("/messages", response_model=list[ConversationOut])
+@limiter.limit("30/minute")  # frontend polls every 5s (12/min); 2 queries per assigned client
 async def list_conversations(
+    request: Request,
     trainer: Usuario = Depends(get_current_trainer),
     db: AsyncSession = Depends(get_db),
 ):
@@ -74,7 +77,9 @@ async def list_conversations(
 
 
 @router.get("/messages/{client_id}", response_model=list[MessageOut])
+@limiter.limit("60/minute")  # polling + switching between client chats
 async def get_conversation(
+    request: Request,
     client_id: uuid.UUID,
     trainer: Usuario = Depends(get_current_trainer),
     db: AsyncSession = Depends(get_db),
@@ -94,7 +99,9 @@ async def get_conversation(
 
 
 @router.post("/messages/{client_id}", response_model=MessageOut, status_code=status.HTTP_201_CREATED)
+@limiter.limit("20/minute")
 async def send_message(
+    request: Request,
     client_id: uuid.UUID,
     body: MessageCreate,
     trainer: Usuario = Depends(get_current_trainer),
@@ -121,7 +128,9 @@ async def send_message(
 
 
 @router.post("/messages/{client_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("60/minute")  # fires on every conversation open
 async def mark_read(
+    request: Request,
     client_id: uuid.UUID,
     trainer: Usuario = Depends(get_current_trainer),
     db: AsyncSession = Depends(get_db),

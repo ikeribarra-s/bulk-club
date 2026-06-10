@@ -12,11 +12,12 @@ Protocol (JSON messages):
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
 
 from backend.auth import get_current_admin
 from backend.config import settings
 from backend.door_manager import door_manager
+from backend.limiter import limiter
 
 logger = logging.getLogger("door")
 
@@ -63,7 +64,8 @@ async def door_agent_ws(ws: WebSocket):
 
 
 @router.get("/status")
-async def door_status(admin=Depends(get_current_admin)):
+@limiter.limit("30/minute")
+async def door_status(request: Request, admin=Depends(get_current_admin)):
     return {
         "enabled": settings.DOOR_CONTROL_ENABLED,
         "agent_connected": door_manager.connected,
@@ -71,7 +73,8 @@ async def door_status(admin=Depends(get_current_admin)):
 
 
 @router.post("/open")
-async def door_open_manual(admin=Depends(get_current_admin)):
+@limiter.limit("10/minute")  # holds the door-agent ack timeout (up to 5s each)
+async def door_open_manual(request: Request, admin=Depends(get_current_admin)):
     """Manual open from the admin portal — for testing / letting someone in."""
     ok, error = await door_manager.open_door(settings.DOOR_NUMBER, settings.DOOR_OPEN_TIMEOUT)
     return {"ok": ok, "error": error}

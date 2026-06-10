@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import _rate_limit_exceeded_handler
+from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from backend.config import settings
 from backend.limiter import limiter
@@ -28,7 +29,24 @@ from backend.routers import (
 
 app = FastAPI(title="Bulk Club API", version="1.0.0")
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    # apiFetch reads `detail` from error responses, so use that key
+    response = JSONResponse(
+        status_code=429,
+        content={"detail": "Demasiadas solicitudes. Esperá un momento e intentá de nuevo."},
+    )
+    if hasattr(request.state, "view_rate_limit"):
+        response = request.app.state.limiter._inject_headers(response, request.state.view_rate_limit)
+    return response
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+
+# Applies default_limits to every route without an explicit @limiter.limit.
+# Added before CORSMiddleware so CORS stays outermost and 429s get CORS headers.
+app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

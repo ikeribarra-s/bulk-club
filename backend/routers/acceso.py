@@ -1,12 +1,13 @@
 from datetime import date, timedelta, datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import get_current_client
 from backend.config import settings
 from backend.database import get_db
+from backend.limiter import limiter
 from backend.door_manager import door_manager
 from backend.models.acceso import Acceso
 from backend.models.cliente import Cliente
@@ -51,7 +52,9 @@ async def _open_door(db: AsyncSession, cliente_id, today: date) -> CheckResult |
 
 
 @router.post("/check", response_model=CheckResult)
+@limiter.limit("10/minute")  # expensive: several queries + up to 5s door-agent wait
 async def check_acceso(
+    request: Request,
     cliente: Cliente = Depends(get_current_client),
     db: AsyncSession = Depends(get_db),
 ):
